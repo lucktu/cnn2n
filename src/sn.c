@@ -121,7 +121,7 @@ static void help() {
 	printf("-g <GID>      | Group ID (numeric) to use when privileges are dropped.\n");
 #endif /* ifndef WIN32 */
 	printf("-t <port>     | Management UDP Port (for multiple supernodes on a machine).\n");
-	printf("-d <net/bit>  | Subnet that provides dhcp service for edge. eg. -d 172.17.12.0/24\n");
+	printf("-d <net/bit>  | Set an automatically assigned subnet for edge, default -d 172.17.12.0/24\n");
 	printf("-v            | Increase verbosity. Can be used multiple times.\n");
 	printf("-h            | This help message.\n");
 	printf("\n");
