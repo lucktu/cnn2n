@@ -1274,9 +1274,9 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 	                    "community: %s\n",
 	                    eee->conf.community_name);
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "    id    tun_tap          MAC                edge                   last_seen\n");
+	                    "    id    MAC                lan_ip           wan_ip                   lseen\n");
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "------------------------------------------------------------------------------\n");
+	                    "---v2------------------------------------------------------------------v2---\n");
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
 	                    "supernode_forward:\n");
@@ -1286,9 +1286,9 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 		if(peer->dev_addr.net_addr == 0) continue;
 		net = htonl(peer->dev_addr.net_addr);
 		msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-		                    "    %-4u  %-15s  %-17s  %-21s  %lu\n",
-		                    ++num, inet_ntoa(*(struct in_addr *) &net),
-		                    macaddr_str(mac_buf, peer->mac_addr),
+		                    "    %-4u  %-17s  %-15s  %-21s    %lu\n",
+		                    ++num, macaddr_str(mac_buf, peer->mac_addr),
+                            inet_ntoa(*(struct in_addr *) &net),
 		                    sock_to_cstr(sockbuf, &(peer->sock)), now - peer->last_seen);
 
 		sendto(eee->udp_mgmt_sock, udp_buf, msg_len, 0/*flags*/,
@@ -1304,9 +1304,9 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 		if(peer->dev_addr.net_addr == 0) continue;
 		net = htonl(peer->dev_addr.net_addr);
 		msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-		                    "    %-4u  %-15s  %-17s  %-21s  %lu\n",
-		                    ++num, inet_ntoa(*(struct in_addr *) &net),
-		                    macaddr_str(mac_buf, peer->mac_addr),
+		                    "    %-4u  %-17s  %-15s  %-21s    %lu\n",
+		                    ++num, macaddr_str(mac_buf, peer->mac_addr),
+                            inet_ntoa(*(struct in_addr *) &net),
 		                    sock_to_cstr(sockbuf, &(peer->sock)), now - peer->last_seen);
 
 		sendto(eee->udp_mgmt_sock, udp_buf, msg_len, 0/*flags*/,
@@ -1315,7 +1315,7 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 	}
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "------------------------------------------------------------------------------\n");
+	                    "---v2------------------------------------------------------------------v2---\n");
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
 	                    "uptime %lu | ",
@@ -1340,7 +1340,7 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 	                    (unsigned int) eee->stats.rx_sup);
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "p2p %u,%u\n",
+	                    "p2p %u,%u | ",
 	                    (unsigned int) eee->stats.tx_p2p,
 	                    (unsigned int) eee->stats.rx_p2p);
 

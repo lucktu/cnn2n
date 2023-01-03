@@ -480,7 +480,7 @@ static int process_mgmt(n2n_sn_t *sss,
 		num = 0;
 		HASH_ITER(hh, community->edges, peer, tmpPeer) {
 			ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-			                    "\%3u  %-17s  %-18s  %-21s      %1u\n",
+			                    "\%3u  %-17s  %-18s  %-21s      %1lu\n",
 			                    ++num, macaddr_str(mac_buf, peer->mac_addr),
 			                    ip_subnet_to_str(ip_bit_str, &peer->dev_addr),
 			                    sock_to_cstr(sockbuf, &(peer->sock)), now - peer->last_seen);
