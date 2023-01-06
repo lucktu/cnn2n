@@ -1,46 +1,7 @@
-```
-https://github.com/lucktu/n2n_ntop/tree/2.7-r525
-Clone: 
-git clone -b 2.7-r525 https://github.com/lucktu/n2n_ntop.git
-```
+æœ¬é¡¹ç›®æ˜¯åœ¨ [n2nå®˜æ–¹v2.8.0](https://github.com/ntop/n2n/tree/2.8-stable) çš„åŸºç¡€ä¸Šåšäº†ä¸€äº›ä¿®æ”¹ï¼Œä»¥ä¾¿äºå¤§å®¶æ›´æ„‰å¿«çš„ä½¿ç”¨ã€ç›®å‰å…¼å®¹v2ã€‘ã€‚ä»¥ä¸‹ä»…è®°å½•ä¿®æ”¹/å¢åŠ çš„éƒ¨åˆ†ï¼š
 
-Õâ¸ö PR À´×ÔÓÚ n2n ¹Ù·½Ô´Âë (v2.7_523.92dfa67£¬ÆäÊµÒÑ¾­ºÜ½Ó½ü¹Ù·½µÄ×îÖÕ v2.8 °æ±¾ÁË)£¬Ä¿µÄÊÇÎªÁË¸ø n2n_v2 
-±£ÁôÒ»¸ö AutoIP µÄ¹¦ÄÜ£¨¹Ù·½ÔÚ×îĞÂµÄ v2.8 ÀïÃæÒÑ¾­È¥µôÁËÕâ¸ö¹¦ÄÜ£©£¬ÎÒÃÇÔÚ´Ë»ù´¡ÉÏÔö¼ÓÁË edge ºÍ supernode 
-µÄ°ïÖúĞÅÏ¢£¬ÒÔ±ãÓÚÊ¹ÓÃ¡£
+1. 2022-12-25ï¼šä¿ç•™å®˜æ–¹åŸæ¥çš„ auto ip çš„åŠŸèƒ½ï¼Œå¹¶å°†ç‰ˆæœ¬å·æ”¹æˆ v2.8.1ï¼Œä»¥ç¤ºåŒºåˆ«ï¼›
+2. 2023-01-04ï¼šä¿®æ”¹ä¸»ç¨‹åºçš„å¸®åŠ©ä¿¡æ¯ä»¥åŠå…¶ç›‘è§†å£çš„è¾“å‡ºæ ¼å¼ï¼Œä¾¿äºé˜…è¯»ï¼›
+2. 2023-00-00ï¼šå³å°†å¢åŠ â€œå¤šçº¿ç¨‹â€çš„æ”¯æŒ, ...
 
-The pr is from the N2N official source code(v2.7_523.92dfa67, it's actually pretty close to the official final V2.8),
-the purpose is to preserve the functionality of an AutoIP for n2n_v2(it's not available in the latest V2.8). 
-We add edge & supernode's help, make it easy to use.
-
-µ±È»ÄãÒ²¿ÉÒÔÈ¥ÕâÀïÏÂÔØ¹Ù·½Ô´Âë
-
-You can also download the official source code here
-
-https://github.com/ntop/n2n/tree/92dfa67e2263a9dedae91c177f822b86a04de5a4
-
-
-
-
-ÖØĞÂÕûÀíÓÚ 2021-9-26
-
-Reorganized on September 26,2021
-
-=======================================================
-
-Îª¹Ù·½Ô´Âë(v2.7_r523)¼ÓÉÏ°ïÖúĞÅÏ¢µÄ·½·¨
-
-Modify form v2.7_r523 to v2.7_r525 (add help for v2.7_r523)
-
-```
-//  src/edge.c
-  printf("-a <mode:address>        | Set interface address. For DHCP use '-r -a dhcp:0.0.0.0'\n");
-to
-  printf("-a <mode:address>        | Set interface address. For DHCP use '-r -a dhcp:0.0.0.0'\n"
-         "                         | default(no -a) is autoip, eg. 172.17.12.x\n");
-
-
-//  src/sn.c
-	printf("-d <net/bit>  | Subnet that provides dhcp service for edge. eg. -d 172.17.12.0/24\n");
-to
-	printf("-d <net/bit>  | Set an automatically assigned subnet for edge, default -d 172.17.12.0/24\n");
-```
+å¦‚æœä½ æ„¿æ„å‚ä¸ä»£ç çš„ä¿®æ­£æˆ–å¢åŠ ï¼Œæœ€å¥½åŠ å…¥QQç¾¤(196588661)è®¨è®ºåè¿›è¡Œã€‚
