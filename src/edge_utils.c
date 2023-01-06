@@ -1691,6 +1691,7 @@ void readFromIPSocket(n2n_edge_t * eee, int in_sock) {
   size_t              idx;
   size_t              msg_type;
   uint8_t             from_supernode;
+  uint8_t             via_multicast;
   struct sockaddr_in  sender_sock;
   n2n_sock_t          sender;
   n2n_sock_t *        orig_sender=NULL;
@@ -1727,6 +1728,8 @@ void readFromIPSocket(n2n_edge_t * eee, int in_sock) {
    * hop as sender. */
   orig_sender=&sender;
 
+  via_multicast = (in_sock == eee->udp_multicast_sock);
+
   traceEvent(TRACE_DEBUG, "### Rx N2N UDP (%d) from %s",
 	     (signed int)recvlen, sock_to_cstr(sockbuf1, &sender));
 
@@ -1755,7 +1758,12 @@ void readFromIPSocket(n2n_edge_t * eee, int in_sock) {
   idx = 0; /* marches through packet header as parts are decoded. */
   if(decode_common(&cmn, udp_buf, &rem, &idx) < 0)
     {
-      traceEvent(TRACE_ERROR, "Failed to decode common section in N2N_UDP");
+      if(via_multicast) {
+          // from some other edge on local network, possibly header encrypted
+          traceEvent(TRACE_DEBUG, "dropped packet arriving via multicast due to error while decoding N2N_UDP");
+      } else {
+          traceEvent(TRACE_WARNING, "failed to decode common section in N2N_UDP");
+      }
       return; /* failed to decode packet */
     }
 
@@ -1809,7 +1817,6 @@ void readFromIPSocket(n2n_edge_t * eee, int in_sock) {
       {
 	/* Another edge is registering with us */
 	n2n_REGISTER_t reg;
-	int via_multicast;
 
 	decode_REGISTER(&reg, &cmn, udp_buf, &rem, &idx);
 
