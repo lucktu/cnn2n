@@ -1580,6 +1580,9 @@ void edge_send_packet2net(n2n_edge_t * eee,
 
       memcpy (tap_pkt, compression_buffer, compression_len);
       len = compression_len;
+    }
+
+    if(compression_buffer) {
       free (compression_buffer);
     }
   }
