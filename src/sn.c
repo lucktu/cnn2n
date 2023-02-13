@@ -109,8 +109,8 @@ static void help() {
 	printf("-t <mgmt port>           | Management UDP port. It can be set when you run multiple supernodes on a machine (default = %d)\n", N2N_SN_MGMT_PORT);
 	printf("-v                       | Increase verbosity. Can be used multiple times\n");
 	printf("-h                       | This help message\n");
-	printf("------------------------------- the following parameters are new from ntop's v2.8.0 by cnn2n -------------------------------\n");
-	printf("-a <net/bit>             | Set an automatically assigned subnet for edges, default(no -a ...) = 172.17.12.0/24\n");
+    printf("--------------------------- new features from ntop's n2n_v2.8.0 (by github.com/lucktu/cnn2n new) ---------------------------\n");
+	printf("-a <net/bit>             | Set an automatically assigned subnet for edges (default = 172.17.12.0/24)\n");
 	exit(1);
 }
 

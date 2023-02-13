@@ -111,27 +111,27 @@ static void help() {
   printf("-d <tun device>          | Tun device name. It's indispensable to run multiple edges on a machine with linux\n");
 #endif
   printf("-a <mode:address>        | Set tun IP address. Mode = static(can be omitted) or dhcp, for DHCP use '-r -a dhcp:0.0.0.0'\n");
-  printf("-c <community>           | Community name that edge belongs to, Up to 15 characters\n");
-  printf("-k <encrypt key>         | Encryption key (ASCII), Up to 32 characters. or N2N_KEY=<encrypt key>\n");
+  printf("-c <community>           | Community name that edge belongs to, up to 15 characters\n");
+  printf("-k <encrypt key>         | Encryption key (ASCII), up to 32 characters (default = no encryption). or N2N_KEY=<encrypt key>\n");
   printf("-s <netmask>             | Edge interface netmask in dotted decimal notation (default = 255.255.255.0)\n");
-  printf("-l <supernode host:port> | The wan IP (or domain name) of the supernode host:<main listen udp port>\n");
-  printf("-i <reg interval>        | Registration interval, for NAT hole punching (default 20 seconds)\n");
-  printf("-L <reg ttl>             | TTL for registration packet when UDP NAT hole punching through supernode (default 0 for not set)\n");
-  printf("-p <communication port>  | Fixed local UDP communication port (default is random)\n");
+  printf("-l <supernode host:port> | The wan_ip (or domain name) of the supernode host:<main listen udp port>\n");
+  printf("-i <reg interval>        | Registration interval, for NAT hole punching (default = 20 (seconds))\n");
+  printf("-L <reg ttl>             | TTL for registration packet when UDP NAT hole punching through supernode (default = 0)\n");
+  printf("-p <communication port>  | Fixed local UDP communication port (default = random)\n");
 #ifndef WIN32
   printf("-u <UID>                 | User ID (numeric) to use when privileges are dropped\n");
   printf("-g <GID>                 | Group ID (numeric) to use when privileges are dropped\n");
 #endif /* ifndef WIN32 */
 #ifndef WIN32
-  printf("-f                       | Run in foreground\n");
+  printf("-f                       | Run in foreground as a daemon\n");
 #endif /* #ifndef WIN32 */
-  printf("-m <MAC address>         | Fixed MAC address for the TAP interface, eg. -m 01:02:03:04:05:06 (default is random)\n");
+  printf("-m <MAC address>         | Fixed MAC address for the TAP interface, eg. -m 01:02:03:04:05:06 (default = random)\n");
   printf("-M <mtu>                 | Specify the MTU of edge interface (default = %d)\n", DEFAULT_MTU);
 #ifndef __APPLE__
   printf("-D                       | Enable PMTU discovery to reduce fragmentation. But connections stall when not properly supported\n");
 #endif
   printf("-r                       | Enable packet forwarding through edge\n");
-  printf("-A1 ... -A5 or -A        | A1 = disable encryption, A2(default) = twofish, "
+  printf("-A1 ... -A5 or -A        | Encryption: A1 = disable, A2 = twofish(default), "
 #ifdef N2N_HAVE_AES
   "A3(A) = AES-CBC, "
 #endif
@@ -155,10 +155,10 @@ static void help() {
   printf("-t <mgmt port>           | Management UDP Port. It can be set when you run multiple edges on a machine (default = %d)\n", N2N_EDGE_MGMT_PORT);
   printf("Environment variables:\n");
   printf("  N2N_KEY                | Encryption key (ASCII). Not with -k\n");
-  printf("------------------------------- the following parameters are new from ntop's v2.8.0 by cnn2n -------------------------------\n");
-  printf("-a <mode:address>        | + Default(no -a ...) = autoip, eg. 172.17.12.x\n");
+  printf("--------------------------- new features from ntop's n2n_v2.8.0 (by github.com/lucktu/cnn2n new) ---------------------------\n");
+  printf("-a <mode:address>        | + Default = autoip, eg. 172.17.12.x\n");
   printf("\n");
-  printf("Recommended: -A4(A4>A5>A3>A2), -M 1386, -E\n");
+  printf("Recommended: -A5, -M 1386, -E\n");
 #ifdef WIN32
   printf("\nAvailable TAP adapters:\n");
   win_print_available_adapters();
