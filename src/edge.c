@@ -126,7 +126,7 @@ static void help() {
   printf("-f                       | Run in foreground as a daemon\n");
 #endif /* #ifndef WIN32 */
   printf("-m <MAC address>         | Fixed MAC address for the TAP interface, eg. -m 01:02:03:04:05:06 (default = random)\n");
-  printf("-M <mtu>                 | Specify the MTU of edge interface (default = %d)\n", DEFAULT_MTU);
+  printf("-M <mtu>                 | Specify the MTU of edge interface (default = 1290)\n");
 #ifndef __APPLE__
   printf("-D                       | Enable PMTU discovery to reduce fragmentation. But connections stall when not properly supported\n");
 #endif
@@ -157,8 +157,9 @@ static void help() {
   printf("  N2N_KEY                | Encryption key (ASCII). Not with -k\n");
   printf("-------------------------- new features from ntop's n2n_v2.8.0 --- by github.com/lucktu/cnn2n new2 --------------------------\n");
   printf("-a <mode:address>        | + Default = autoip, eg. 172.17.12.x\n");
+  printf("-M <mtu>                 | Default = %d\n", DEFAULT_MTU);
   printf("\n");
-  printf("Recommended: -A5, -M 1386, -E\n");
+  printf("Recommended: -A5, -E\n");
 #ifdef WIN32
   printf("\nAvailable TAP adapters:\n");
   win_print_available_adapters();
