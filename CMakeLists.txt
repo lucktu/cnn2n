@@ -32,12 +32,16 @@ add_definitions(-DCMAKE_BUILD)
 add_definitions(-DGIT_RELEASE="${N2N_VERSION}" -DPACKAGE_VERSION="${N2N_VERSION}" -DPACKAGE_OSNAME="${N2N_OSNAME}")
 add_definitions(-DN2N_VERSION="${N2N_VERSION}" -DN2N_OSNAME="${N2N_OSNAME}")
 
+# third-party directory
+set(THIRD_PARTY_DIR ${CMAKE_SOURCE_DIR}/thirdparty)
 
 # Build information
 OPTION(BUILD_SHARED_LIBS "BUILD Shared Library" OFF)
 
 # N2n specific params
 OPTION(N2N_OPTION_AES "USE AES" ON)
+
+OPTION(N2N_OPTION_USE_PORTMAPPING "USE MINIUPNP AND NATPMP Libraries" ON)
 
 if(NOT DEFINED N2N_OPTION_AES)
 set(N2N_OPTION_AES ON)
@@ -54,6 +58,15 @@ if(N2N_OPTION_AES)
   endif(NOT OPENSSL_FOUND)
 endif(N2N_OPTION_AES)
 
+ADD_DEFINITIONS("-DHAVE_PTHREAD")
+
+if(N2N_OPTION_USE_PORTMAPPING)
+  ADD_DEFINITIONS("-DHAVE_MINIUPNP")
+  ADD_DEFINITIONS("-DHAVE_NATPMP")
+  include_directories(${THIRD_PARTY_DIR}/miniupnp/miniupnpc/include)
+  include_directories(${PROJECT_BINARY_DIR}/lib_miniupnpc)
+  include_directories(${THIRD_PARTY_DIR}/libnatpmp)
+endif(N2N_OPTION_USE_PORTMAPPING)
 
 if(NOT DEFINED CMAKE_BUILD_TYPE)
 set(CMAKE_BUILD_TYPE None)
@@ -110,6 +123,7 @@ add_library(n2n STATIC
         src/tuntap_netbsd.c
         src/tuntap_linux.c
         src/tuntap_osx.c
+        src/n2n_port_mapping.c
         )
 
 if(DEFINED WIN32)
@@ -123,6 +137,13 @@ if(N2N_OPTION_AES)
   target_link_libraries(n2n ${OPENSSL_LIBRARIES})
 endif(N2N_OPTION_AES)
 
+if(N2N_OPTION_USE_PORTMAPPING)
+  add_subdirectory(${THIRD_PARTY_DIR}/miniupnp/miniupnpc lib_miniupnpc)
+  link_directories(${PROJECT_BINARY_DIR}/lib_miniupnpc)
+  add_subdirectory(${THIRD_PARTY_DIR}/libnatpmp libnatpmp)
+  link_directories(${PROJECT_BINARY_DIR}/libnatpmp)
+  target_link_libraries(n2n libminiupnpc-static natpmp)
+endif(N2N_OPTION_USE_PORTMAPPING)
 
 add_executable(edge src/edge.c)
 target_link_libraries(edge n2n)

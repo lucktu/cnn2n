@@ -273,6 +273,18 @@ typedef struct n2n_tuntap_priv_config {
 
 /* *************************************************** */
 
+// structure to hold port mapping thread's parameters
+typedef struct n2n_port_map_parameter {
+#ifdef HAVE_PTHREAD
+    pthread_t               id;            /* thread id */
+    pthread_mutex_t         access;        /* mutex for shared access */
+#endif
+    uint16_t                mgmt_port;
+    uint16_t                mapped_port;
+    uint16_t                new_port;      /* REVISIT: remove with management port subscriptions */
+} n2n_port_map_parameter_t;
+
+/* *************************************************** */
 
 typedef struct n2n_edge_conf {
 	n2n_sn_name_t       sn_ip_array[N2N_EDGE_NUM_SUPERNODES];
@@ -296,8 +308,10 @@ typedef struct n2n_edge_conf {
 	int                 register_ttl;           /**< TTL for registration packet when UDP NAT hole punching through supernode. */
 	int                 local_port;
 	int                 mgmt_port;
+    uint8_t             port_forwarding;        /**< indicates if port forwarding UPNP/PMP is enabled */
+    n2n_sock_t          preferred_sock;         /**< propagated local sock for better p2p in LAN (-e) */
+    uint8_t             preferred_sock_auto;    /**< indicates desired auto detect for preferred sock */
 } n2n_edge_conf_t;
-
 
 struct n2n_edge_stats {
 	uint32_t tx_p2p;
@@ -348,8 +362,12 @@ struct n2n_edge {
 	struct n2n_edge_stats stats;                 /**< Statistics */
 
 	n2n_tuntap_priv_config_t tuntap_priv_conf;   /**< Tuntap config */
+    n2n_port_map_parameter_t *port_map_parameter;/**< Pointer to port mapping thread's parameter block */
 };
 
+#if defined(HAVE_MINIUPNP) || defined(HAVE_NATPMP)
+#include "n2n_port_mapping.h"
+#endif // HAVE_MINIUPNP || HAVE_NATPMP
 
 typedef struct sn_stats
 {

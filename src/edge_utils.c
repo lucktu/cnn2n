@@ -46,6 +46,9 @@ static void check_known_peer_sock_change(n2n_edge_t *eee,
                                          const n2n_sock_t *peer,
                                          time_t when);
 
+int port_map_create_thread (n2n_port_map_parameter_t **param, uint16_t mgmt_port);
+int port_map_cancel_thread (n2n_port_map_parameter_t *param);
+
 /* ************************************** */
 
 int edge_verify_conf(const n2n_edge_conf_t *conf) {
@@ -261,6 +264,13 @@ n2n_edge_t* edge_init(const n2n_edge_conf_t *conf, int *rv) {
     traceEvent(TRACE_ERROR, "routes setup failed");
     goto edge_init_error;
   }
+
+#if defined(HAVE_MINIUPNP) || defined(HAVE_NATPMP)
+  if(eee->conf.port_forwarding)
+    if(port_map_create_thread(&eee->port_map_parameter, eee->conf.mgmt_port) == 0) {
+        traceEvent(TRACE_NORMAL, "successfully created port mapping thread");
+    }
+#endif // HAVE_MINIUPNP || HAVE_NATPMP
 
   //edge_init_success:
   *rv = 0;
@@ -2175,6 +2185,11 @@ int run_edge_loop(n2n_edge_t * eee, int *keep_running) {
 
 /** Deinitialise the edge and deallocate any owned memory. */
 void edge_term(n2n_edge_t * eee) {
+#if defined(HAVE_MINIUPNP) || defined(HAVE_NATPMP)
+    if(eee->conf.port_forwarding)
+        port_map_cancel_thread(eee->port_map_parameter);
+#endif // HAVE_MINIUPNP || HAVE_NATPMP
+
   if(eee->udp_sock >= 0)
     closesocket(eee->udp_sock);
 
@@ -2260,6 +2275,13 @@ static int edge_init_sockets(n2n_edge_t *eee, int udp_local_port, int mgmt_port,
 #endif
   }
 #endif
+
+#if defined(HAVE_MINIUPNP) || defined(HAVE_NATPMP)
+    if(eee->conf.port_forwarding)
+        // REVISIT: replace with mgmt port notification to listener for mgmt port
+        //          subscription support
+        n2n_chg_port_mapping(eee, eee->conf.preferred_sock.port);
+#endif // HAVE_MINIUPNP || HAVE_NATPMP
 
   return(0);
 }
@@ -2666,6 +2688,10 @@ void edge_init_conf_defaults(n2n_edge_conf_t *conf) {
 	conf->disable_pmtu_discovery = 1;
 	conf->register_interval = REGISTER_SUPER_INTERVAL_DFL;
 	conf->tuntap_ip_mode = TUNTAP_IP_MODE_SN_ASSIGN;
+
+#if defined(HAVE_MINIUPNP) || defined(HAVE_NATPMP)
+    conf->port_forwarding = 1;
+#endif // HAVE_MINIUPNP || HAVE_NATPMP
 
 	if (getenv("N2N_KEY")) {
 		conf->encrypt_key = strdup(getenv("N2N_KEY"));

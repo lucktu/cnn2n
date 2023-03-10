@@ -121,3 +121,12 @@
 #define min(a, b) ((a > b) ? b : a)
 #endif
 
+#ifdef _MSC_VER
+#define N2N_THREAD_RETURN_DATATYPE       DWORD WINAPI
+#define N2N_THREAD_PARAMETER_DATATYPE    LPVOID
+#else
+#define N2N_THREAD_RETURN_DATATYPE        void*
+#define N2N_THREAD_PARAMETER_DATATYPE     void*
+#endif
+
+#define AF_INVALID                       -1 /* to mark a socket invalid by an invalid address family (do not use AF_UNSPEC, it could turn into auto-detect) */
