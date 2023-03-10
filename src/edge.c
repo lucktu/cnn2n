@@ -157,6 +157,7 @@ static void help() {
   printf("  N2N_KEY                | Encryption key (ASCII). Not with -k\n");
   printf("--------------------------- new features from ntop's n2n_v2.8.0 (by github.com/lucktu/cnn2n new) ---------------------------\n");
   printf("-a <mode:address>        | + Default = autoip, eg. 172.17.12.x\n");
+  printf("-e <local ip>            | Advertises the provided local IP address as preferred, useful if multicast peer detection is not available\n");
 #if defined(HAVE_MINIUPNP) || defined(HAVE_NATPMP)
   printf("--no-port-forwarding     | Disable uPnP/PMP port forwarding\n");
 #endif
@@ -474,6 +475,33 @@ static int setOption(int optkey, char *optargument, n2n_tuntap_priv_config_t *ec
   case '}':
     {
       conf->port_forwarding = 0;
+      break;
+    }
+
+  case 'e':
+    {
+      in_addr_t address_tmp;
+
+      if(optargument) {
+
+        if(!strcmp(optargument, "auto")) {
+          address_tmp = INADDR_ANY;
+          conf->preferred_sock_auto = 1;
+        } else {
+          address_tmp = inet_addr(optargument);
+        }
+
+        memcpy(&(conf->preferred_sock.addr.v4), &(address_tmp), IPV4_SIZE);
+
+        if(address_tmp == INADDR_NONE) {
+          traceEvent(TRACE_WARNING, "bad address for preferred local socket, skipping");
+          conf->preferred_sock.family = AF_INVALID;
+          break;
+        } else {
+          conf->preferred_sock.family = AF_INET;
+          // port is set after parsing all cli parameters during supernode_connect()
+        }
+      }
       break;
     }
 

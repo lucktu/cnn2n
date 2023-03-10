@@ -184,6 +184,7 @@ typedef struct n2n_PEER_INFO {
 	uint16_t             aflags;
 	n2n_mac_t            mac;
 	n2n_sock_t           sock;
+	n2n_sock_t           preferred_sock;
 } n2n_PEER_INFO_t;
 
 

@@ -201,6 +201,7 @@ struct peer_info {
 	n2n_mac_t        mac_addr;
 	n2n_ip_subnet_t  dev_addr;
 	n2n_sock_t       sock;
+	n2n_sock_t       preferred_sock;
 	int              timeout;
 	time_t           last_seen;
 	time_t           last_p2p;
@@ -286,6 +287,7 @@ typedef struct n2n_port_map_parameter {
 
 /* *************************************************** */
 
+
 typedef struct n2n_edge_conf {
 	n2n_sn_name_t       sn_ip_array[N2N_EDGE_NUM_SUPERNODES];
 	n2n_route_t         *routes;                /**< Networks to route through n2n */
@@ -312,6 +314,7 @@ typedef struct n2n_edge_conf {
     n2n_sock_t          preferred_sock;         /**< propagated local sock for better p2p in LAN (-e) */
     uint8_t             preferred_sock_auto;    /**< indicates desired auto detect for preferred sock */
 } n2n_edge_conf_t;
+
 
 struct n2n_edge_stats {
 	uint32_t tx_p2p;

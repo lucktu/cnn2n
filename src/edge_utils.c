@@ -436,7 +436,7 @@ static int find_peer_time_stamp_and_verify (n2n_edge_t * eee,
  */
 static void register_with_local_peers(n2n_edge_t * eee) {
 #ifndef SKIP_MULTICAST_PEERS_DISCOVERY
-  if(eee->multicast_joined && eee->conf.allow_p2p) {
+  if(eee->multicast_joined && eee->conf.allow_p2p && eee->conf.preferred_sock.family == (uint8_t)AF_INVALID) {
     /* send registration to the local multicast group */
     traceEvent(TRACE_DEBUG, "Registering with multicast group %s:%u",
 	       N2N_MULTICAST_GROUP, N2N_MULTICAST_PORT);
@@ -731,7 +731,7 @@ static ssize_t sendto_sock(int fd, const void * buf,
 /* Bind eee->udp_multicast_sock to multicast group */
 static void check_join_multicast_group(n2n_edge_t *eee) {
 #ifndef SKIP_MULTICAST_PEERS_DISCOVERY
-  if(!eee->multicast_joined) {
+  if(eee->conf.preferred_sock.family == (uint8_t)AF_INVALID && !eee->multicast_joined) {
     struct ip_mreq mreq;
     mreq.imr_multiaddr.s_addr = inet_addr(N2N_MULTICAST_GROUP);
     mreq.imr_interface.s_addr = htonl(INADDR_ANY);
@@ -768,8 +768,17 @@ static void send_register_super(n2n_edge_t *eee, const n2n_sock_t *supernode, in
 
 	cmn.ttl = N2N_DEFAULT_TTL;
 	cmn.pc = n2n_register_super;
-	cmn.flags = 0;
-	memcpy(cmn.community, eee->conf.community_name, N2N_COMMUNITY_SIZE);
+#if 0 // TODO : Oliver, reg.sock do not exist for v2
+    if(eee->conf.preferred_sock.family == (uint8_t)AF_INVALID) {
+        cmn.flags = 0;
+    } else {
+        cmn.flags = N2N_FLAGS_SOCKET;
+        memcpy(&(reg.sock), &(eee->conf.preferred_sock), sizeof(n2n_sock_t));
+    }
+#else
+    cmn.flags = 0;
+#endif
+    memcpy(cmn.community, eee->conf.community_name, N2N_COMMUNITY_SIZE);
 
 	for (idx = 0; (sn_idx==0) && (idx < N2N_COOKIE_SIZE); ++idx)
 		eee->last_cookie[idx] = n2n_rand() % 0xff;
@@ -2011,6 +2020,16 @@ void readFromIPSocket(n2n_edge_t * eee, int in_sock) {
             traceEvent(TRACE_INFO, "Rx PEER_INFO for %s: is at %s",
                        macaddr_str(mac_buf1, pi.mac),
                        sock_to_cstr(sockbuf1, &pi.sock));
+
+          if(cmn.flags & N2N_FLAGS_SOCKET) {
+              scan->preferred_sock = pi.preferred_sock;
+              send_register(eee, &scan->preferred_sock, scan->mac_addr);
+
+              traceEvent(TRACE_INFO, "%s has preferred local socket at [%s]",
+                         macaddr_str(mac_buf1, pi.mac),
+                         sock_to_cstr(sockbuf1, &pi.preferred_sock));
+          }
+
             send_register(eee, &scan->sock, scan->mac_addr);
 	  } else {
             traceEvent(TRACE_INFO, "Rx PEER_INFO unknown peer %s",
@@ -2082,8 +2101,10 @@ int run_edge_loop(n2n_edge_t * eee, int *keep_running) {
     max_sock = max(eee->udp_sock, eee->udp_mgmt_sock);
 
 #ifndef SKIP_MULTICAST_PEERS_DISCOVERY
-    FD_SET(eee->udp_multicast_sock, &socket_mask);
-    max_sock = max(eee->udp_sock, eee->udp_multicast_sock);
+    if(eee->conf.preferred_sock.family == (uint8_t)AF_INVALID) {
+        FD_SET(eee->udp_multicast_sock, &socket_mask);
+        max_sock = max(eee->udp_sock, eee->udp_multicast_sock);
+    }
 #endif
 
 #ifndef WIN32
@@ -2215,8 +2236,56 @@ void edge_term(n2n_edge_t * eee) {
 
 /* ************************************** */
 
+// detect local IP address by probing a connection to the supernode
+static int detect_local_ip_address (n2n_sock_t* out_sock, const n2n_edge_t* eee) {
+
+    struct sockaddr_in local_sock;
+    struct sockaddr_in sn_sock;
+    socklen_t sock_len = sizeof(local_sock);
+    SOCKET probe_sock;
+    int ret = 0;
+
+    out_sock->family = AF_INVALID;
+
+    // always detetct local port even/especially if chosen by OS...
+    if((getsockname(eee->udp_sock, (struct sockaddr *)&local_sock, &sock_len) == 0)
+       && (local_sock.sin_family == AF_INET)
+       && (sock_len == sizeof(local_sock)))
+        // remember the port number
+        out_sock->port = ntohs(local_sock.sin_port);
+    else
+        ret = -1;
+
+    // probe for local IP address
+    probe_sock = socket(PF_INET, SOCK_DGRAM, 0);
+    // connecting the UDP socket makes getsockname read the local address it uses to connect (to the sn in this case);
+    // we cannot do it with the real (eee->sock) socket because socket does not accept any conenction from elsewhere then,
+    // e.g. from another edge instead of the supernode; as re-connecting to AF_UNSPEC might not work to release the socket
+    // on non-UNIXoids, we use a temporary socket
+    if((int)probe_sock >= 0) {
+        fill_sockaddr((struct sockaddr*)&sn_sock, sizeof(sn_sock), &eee->supernode);
+        if(connect(probe_sock, (struct sockaddr *)&sn_sock, sizeof(sn_sock)) == 0) {
+            if((getsockname(probe_sock, (struct sockaddr *)&local_sock, &sock_len) == 0)
+               && (local_sock.sin_family == AF_INET)
+               && (sock_len == sizeof(local_sock))) {
+                memcpy(&(out_sock->addr.v4), &(local_sock.sin_addr.s_addr), IPV4_SIZE);
+            } else
+                ret = -4;
+        } else
+            ret = -3;
+        closesocket(probe_sock);
+    } else
+        ret = -2;
+
+    out_sock->family = AF_INET;
+
+    return ret;
+}
+
 static int edge_init_sockets(n2n_edge_t *eee, int udp_local_port, int mgmt_port, uint8_t tos) {
   int sockopt;
+  n2n_sock_t local_sock;
+  n2n_sock_str_t sockbuf;
 
   if(udp_local_port > 0)
     traceEvent(TRACE_NORMAL, "Binding to local port %d", udp_local_port);
@@ -2275,6 +2344,19 @@ static int edge_init_sockets(n2n_edge_t *eee, int udp_local_port, int mgmt_port,
 #endif
   }
 #endif
+
+    memset(&local_sock, 0, sizeof(n2n_sock_t));
+    if(detect_local_ip_address(&local_sock, eee) == 0) {
+        // always overwrite local port even/especially if chosen by OS...
+        eee->conf.preferred_sock.port = local_sock.port;
+        // only if auto-detection mode, ...
+        if(eee->conf.preferred_sock_auto) {
+            // ... overwrite IP address, too (whole socket struct here)
+            memcpy(&eee->conf.preferred_sock, &local_sock, sizeof(n2n_sock_t));
+            traceEvent(TRACE_INFO, "determined local socket [%s]",
+                       sock_to_cstr(sockbuf, &local_sock));
+        }
+    }
 
 #if defined(HAVE_MINIUPNP) || defined(HAVE_NATPMP)
     if(eee->conf.port_forwarding)
@@ -2679,6 +2761,7 @@ void edge_init_conf_defaults(n2n_edge_conf_t *conf) {
 	memset(conf, 0, sizeof(*conf));
 
 	conf->local_port = 0 /* any port */;
+    conf->preferred_sock.family = AF_INVALID;
 	conf->mgmt_port = N2N_EDGE_MGMT_PORT; /* 5644 by default */
 	conf->transop_id = N2N_TRANSFORM_ID_NULL;
 	conf->header_encryption = HEADER_ENCRYPTION_NONE;
