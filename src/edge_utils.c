@@ -1808,9 +1808,6 @@ void readFromIPSocket(n2n_edge_t * eee, int in_sock) {
             }
           }
 
-	  if(is_valid_peer_sock(&pkt.sock))
-	    orig_sender = &(pkt.sock);
-
 	  if(!from_supernode) {
 	    /* This is a P2P packet from the peer. We purge a pending
 	     * registration towards the possibly nat-ted peer address as we now have
@@ -1823,6 +1820,10 @@ void readFromIPSocket(n2n_edge_t * eee, int in_sock) {
 	  }
     else {
       /* [PsP] : edge Peer->Supernode->edge Peer */
+
+	  if(is_valid_peer_sock(&pkt.sock))
+	    orig_sender = &(pkt.sock);
+
       traceEvent(TRACE_DEBUG, "[PsP] Rx data from %s (Via=%s) [%u B]",
                  sock_to_cstr(sockbuf2, orig_sender), sock_to_cstr(sockbuf1, &sender), recvlen);
     }
