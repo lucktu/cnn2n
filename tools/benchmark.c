@@ -66,7 +66,7 @@ int main(int argc, char * argv[]) {
 #ifdef N2N_HAVE_AES
   n2n_trans_op_t transop_aes_cbc;
 #endif
-#ifdef HAVE_OPENSSL_1_1
+#ifdef N2N_HAVE_CC20
   n2n_trans_op_t transop_cc20;
 #endif
 
@@ -86,7 +86,7 @@ int main(int argc, char * argv[]) {
 #ifdef N2N_HAVE_AES
   n2n_transop_aes_cbc_init(&conf, &transop_aes_cbc);
 #endif
-#ifdef HAVE_OPENSSL_1_1
+#ifdef N2N_HAVE_CC20
   n2n_transop_cc20_init(&conf, &transop_cc20);
 #endif
   n2n_transop_speck_init(&conf, &transop_speck);
@@ -97,7 +97,7 @@ int main(int argc, char * argv[]) {
 #ifdef N2N_HAVE_AES
   run_transop_benchmark("transop_aes", &transop_aes_cbc, &conf, pktbuf);
 #endif
-#ifdef HAVE_OPENSSL_1_1
+#ifdef N2N_HAVE_CC20
   run_transop_benchmark("transop_cc20", &transop_cc20, &conf, pktbuf);
 #endif
   run_transop_benchmark("transop_speck", &transop_speck, &conf, pktbuf);
@@ -108,7 +108,7 @@ int main(int argc, char * argv[]) {
 #ifdef N2N_HAVE_AES
   transop_aes_cbc.deinit(&transop_aes_cbc);
 #endif
-#ifdef HAVE_OPENSSL_1_1
+#ifdef N2N_HAVE_CC20
   transop_cc20.deinit(&transop_cc20);
 #endif
   transop_speck.deinit(&transop_speck);

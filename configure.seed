@@ -34,12 +34,22 @@ else
   N2N_LIBS="-lcrypto ${N2N_LIBS}"
 fi
 
+AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_reset])
+
+if test "x$ac_cv_lib_crypto_EVP_CIPHER_CTX_reset" != xyes; then
+  AC_MSG_RESULT(Building n2n without ChaCha20 support)
+else
+  AC_MSG_RESULT(checking for ChaCha20_encrypt in -lcrypto... yes)
+  AC_DEFINE([N2N_HAVE_CC20], [], [Have ChaCha20 support])
+  N2N_LIBS="-lcrypto ${N2N_LIBS}"
+fi
+
 OLD_CFLAGS="${CFLAGS}"
 OLD_LDFLAGS="${LDFLAGS}"
 
 CFLAGS="${CFLAGS} -I/usr/local/opt/openssl@1.1/include"
 LDFLAGS="${LDFLAGS} -L/usr/local/opt/openssl@1.1/lib/"
-AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_reset])
+#AC_CHECK_LIB([crypto], [EVP_CIPHER_CTX_reset])
 if test "x$ac_cv_lib_crypto_EVP_CIPHER_CTX_reset" != xyes; then
    CFLAGS="${OLD_CFLAGS}"
    LDFLAGS="${OLD_LDFLAGS}"

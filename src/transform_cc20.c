@@ -18,7 +18,7 @@
 
 #include "n2n.h"
 
-#ifdef HAVE_OPENSSL_1_1
+#ifdef N2N_HAVE_CC20
 
 #include <openssl/sha.h>
 #include <openssl/evp.h>
@@ -79,7 +79,8 @@ static char *openssl_err_as_string (void) {
 static void set_cc20_iv(transop_cc20_t *priv, n2n_cc20_ivec_t ivec) {
   // keep in mind the following condition: N2N_CC20_IVEC_SIZE % sizeof(rand_value) == 0 !
   uint64_t rand_value;
-  for (uint8_t i = 0; i < N2N_CC20_IVEC_SIZE; i += sizeof(rand_value)) {
+  uint8_t i;
+  for (i = 0; i < N2N_CC20_IVEC_SIZE; i += sizeof(rand_value)) {
     rand_value = n2n_rand();
     memcpy(ivec + i, &rand_value, sizeof(rand_value));
   }
@@ -289,4 +290,4 @@ int n2n_transop_cc20_init(const n2n_edge_conf_t *conf, n2n_trans_op_t *ttt) {
   return(setup_cc20_key(priv, encrypt_key, encrypt_key_len));
 }
 
-#endif /* HAVE_OPENSSL_1_1 */
+#endif /* N2N_HAVE_CC20 */

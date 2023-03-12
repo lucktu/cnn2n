@@ -108,7 +108,7 @@ static void help() {
   printf("\n");
 
 #if defined(N2N_CAN_NAME_IFACE)
-  printf("-d <tun device>          | Tun device name. It's indispensable to run multiple edges on a machine with linux\n");
+  printf("-d <tun device>          | Tun device name(default = edge0). It's indispensable to run multiple edges on a machine with linux\n");
 #endif
   printf("-a <mode:address>        | Set tun IP address. Mode = static(can be omitted) or dhcp, for DHCP use '-r -a dhcp:0.0.0.0'\n");
   printf("-c <community>           | Community name that edge belongs to, up to 15 characters\n");
@@ -135,7 +135,7 @@ static void help() {
 #ifdef N2N_HAVE_AES
   "A3(A) = AES-CBC, "
 #endif
-#ifdef HAVE_OPENSSL_1_1
+#ifdef N2N_HAVE_CC20
   "A4 = ChaCha20, "
 #endif
   "A5 = Speck-CTR\n");
@@ -220,7 +220,7 @@ static void setPayloadEncryption( n2n_edge_conf_t *conf, int cipher) {
       break;
     }
 #endif
-#ifdef HAVE_OPENSSL_1_1
+#ifdef N2N_HAVE_CC20
   case 4:
     {
       conf->transop_id = N2N_TRANSFORM_ID_CHACHA20;

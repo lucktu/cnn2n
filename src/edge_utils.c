@@ -226,7 +226,7 @@ n2n_edge_t* edge_init(const n2n_edge_conf_t *conf, int *rv) {
     rc = n2n_transop_aes_cbc_init(&eee->conf, &eee->transop);
     break;
 #endif
-#ifdef HAVE_OPENSSL_1_1
+#ifdef N2N_HAVE_CC20
   case N2N_TRANSFORM_ID_CHACHA20:
     rc = n2n_transop_cc20_init(&eee->conf, &eee->transop);
     break;

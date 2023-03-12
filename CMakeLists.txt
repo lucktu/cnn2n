@@ -32,12 +32,12 @@ add_definitions(-DCMAKE_BUILD)
 add_definitions(-DGIT_RELEASE="${N2N_VERSION}" -DPACKAGE_VERSION="${N2N_VERSION}" -DPACKAGE_OSNAME="${N2N_OSNAME}")
 add_definitions(-DN2N_VERSION="${N2N_VERSION}" -DN2N_OSNAME="${N2N_OSNAME}")
 
-
 # Build information
 OPTION(BUILD_SHARED_LIBS "BUILD Shared Library" OFF)
 
 # N2n specific params
 OPTION(N2N_OPTION_AES "USE AES" ON)
+OPTION(N2N_OPTION_CC20 "USE ChaCha20" OFF) # There are problems with static and cross-compilation
 
 if(NOT DEFINED N2N_OPTION_AES)
 set(N2N_OPTION_AES ON)
@@ -54,6 +54,16 @@ if(N2N_OPTION_AES)
   endif(NOT OPENSSL_FOUND)
 endif(N2N_OPTION_AES)
 
+if(N2N_OPTION_CC20)
+  find_package(OpenSSL QUIET)
+  if(NOT OPENSSL_FOUND)
+    MESSAGE(WARNING "OpenSSL not found, ChaCha20 disabled.")
+    set(N2N_OPTION_CC20 OFF)
+  else()
+    include_directories(${OPENSSL_INCLUDE_DIR})
+    add_definitions(-DN2N_HAVE_CC20)
+  endif(NOT OPENSSL_FOUND)
+endif(N2N_OPTION_CC20)
 
 if(NOT DEFINED CMAKE_BUILD_TYPE)
 set(CMAKE_BUILD_TYPE None)
@@ -76,7 +86,6 @@ endif(DEFINED UNIX)
 # Static target.
 #SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -static")
 
-
 INCLUDE_DIRECTORIES(.)
 INCLUDE_DIRECTORIES(include)
 if(DEFINED WIN32)
@@ -86,7 +95,6 @@ if(DEFINED WIN32)
 #  Customize library.
 #  LINK_DIRECTORIES("D:/Program Files/MinGW/opt/lib/" "D:/Program Files/MinGW/x86_64-w64-mingw32/lib/")
 endif(DEFINED WIN32)
-
 
 #aux_source_directory(./src N2N_DIR_SRCS)
 #add_library(n2n STATIC ${N2N_DIR_SRCS})
@@ -123,6 +131,10 @@ if(N2N_OPTION_AES)
   target_link_libraries(n2n ${OPENSSL_LIBRARIES})
 endif(N2N_OPTION_AES)
 
+if(N2N_OPTION_CC20)
+#  target_link_libraries(n2n crypto)
+  target_link_libraries(n2n ${OPENSSL_LIBRARIES})
+endif(N2N_OPTION_CC20)
 
 add_executable(edge src/edge.c)
 target_link_libraries(edge n2n)
@@ -154,7 +166,6 @@ install(TARGETS edge supernode
         LIBRARY DESTINATION lib
         ARCHIVE DESTINATION lib
        )
-
 
 # Tools
 add_executable(n2n-benchmark tools/benchmark.c)
