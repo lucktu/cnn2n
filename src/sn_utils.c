@@ -253,6 +253,10 @@ void sn_term(n2n_sn_t *sss)
         HASH_DEL(sss->communities, community);
         free(community);
     }
+
+#ifdef WIN32
+	destroyWin32();
+#endif
 }
 
 /** Determine the appropriate lifetime for new registrations.

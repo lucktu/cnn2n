@@ -187,10 +187,6 @@ n2n_edge_t* edge_init(const n2n_edge_conf_t *conf, int *rv) {
     goto edge_init_error;
   }
 
-#ifdef WIN32
-  initWin32();
-#endif
-
   memcpy(&eee->conf, conf, sizeof(*conf));
   eee->start_time = time(NULL);
 
