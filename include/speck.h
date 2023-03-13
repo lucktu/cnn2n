@@ -31,7 +31,7 @@ typedef struct {
   u64 key[34];
 } speck_context_t;
 
-#elif defined (__ARM_NEON)
+#elif defined (__ARM_NEON) && defined (SPECK_ARM_NEON)  // NEON support ---------------------------------------
 
 #include <arm_neon.h>
 #define u128 uint64x2_t

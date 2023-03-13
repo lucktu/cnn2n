@@ -390,7 +390,7 @@ int speck_expand_key (const unsigned char *k, speck_context_t *ctx) {
 }
 
 
-#elif defined (__ARM_NEON)	// NEON support -------------------------------------------
+#elif defined (__ARM_NEON) && defined (SPECK_ARM_NEON)  // NEON support ---------------------------------------
 
 
 #define LCS(x,r) (((x)<<r)|((x)>>(64-r)))
