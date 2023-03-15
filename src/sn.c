@@ -142,21 +142,21 @@ static int setOption(int optkey, char *_optarg, n2n_sn_t *sss) {
 			if ((net < 0) || (net == INADDR_NONE) || (net == INADDR_ANY)) {
 				traceEvent(TRACE_WARNING, "Bad network '%s' in '%s', Use default: '%s/%d'",
 				           ip_str, _optarg,
-				           N2N_SN_DHCP_NET_ADDR_DEFAULT, N2N_SN_DHCP_NET_BIT_DEFAULT);
+				           N2N_SN_AUTO_IP_NET_ADDR_DEFAULT, N2N_SN_AUTO_IP_NET_BIT_DEFAULT);
 				break;
 			}
 
 			if (bitlen > 32) {
 				traceEvent(TRACE_WARNING, "Bad prefix '%hhu' in '%s', Use default: '%s/%d'",
 				           bitlen, _optarg,
-				           N2N_SN_DHCP_NET_ADDR_DEFAULT, N2N_SN_DHCP_NET_BIT_DEFAULT);
+				           N2N_SN_AUTO_IP_NET_ADDR_DEFAULT, N2N_SN_AUTO_IP_NET_BIT_DEFAULT);
 				break;
 			}
 
-			traceEvent(TRACE_NORMAL, "The subnet of DHCP service is: '%s/%hhu'.", ip_str, bitlen);
+			traceEvent(TRACE_NORMAL, "The subnet of auto ip service is: '%s/%hhu'.", ip_str, bitlen);
 
-			sss->dhcp_addr.net_addr = ntohl(net);
-			sss->dhcp_addr.net_bitlen = bitlen;
+			sss->auto_ip_addr.net_addr = ntohl(net);
+			sss->auto_ip_addr.net_bitlen = bitlen;
 
 			break;
 		}
@@ -203,7 +203,7 @@ static const struct option long_options[] = {
 		{"foreground",  no_argument,       NULL, 'f'},
 		{"local-port",  required_argument, NULL, 'l'},
 		{"mgmt-port",   required_argument, NULL, 't'},
-		{"dhcp",        required_argument, NULL, 'a'},
+		{"auto_ip",     required_argument, NULL, 'a'},
 		{"help",        no_argument,       NULL, 'h'},
 		{"verbose",     no_argument,       NULL, 'v'},
 		{NULL, 0,                          NULL, 0}

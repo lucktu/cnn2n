@@ -381,7 +381,7 @@ typedef struct n2n_sn {
 	uint16_t mport;            /* Management UDP port to bind to. */
 	int sock;                  /* Main socket for UDP traffic with edges. */
 	int mgmt_sock;             /* management socket. */
-	n2n_ip_subnet_t dhcp_addr; /* Address range of dhcp service. */
+	n2n_ip_subnet_t auto_ip_addr; /* Address range of auto ip service. */
 #ifndef WIN32
 	uid_t userid;
 	gid_t groupid;

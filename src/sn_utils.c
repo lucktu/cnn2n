@@ -218,9 +218,9 @@ int sn_init(n2n_sn_t *sss) {
 	sss->mport = N2N_SN_MGMT_PORT;
 	sss->sock = -1;
 	sss->mgmt_sock = -1;
-	sss->dhcp_addr.net_addr = inet_addr(N2N_SN_DHCP_NET_ADDR_DEFAULT);
-	sss->dhcp_addr.net_addr = ntohl(sss->dhcp_addr.net_addr);
-	sss->dhcp_addr.net_bitlen = N2N_SN_DHCP_NET_BIT_DEFAULT;
+	sss->auto_ip_addr.net_addr = inet_addr(N2N_SN_AUTO_IP_NET_ADDR_DEFAULT);
+	sss->auto_ip_addr.net_addr = ntohl(sss->auto_ip_addr.net_addr);
+	sss->auto_ip_addr.net_bitlen = N2N_SN_AUTO_IP_NET_BIT_DEFAULT;
 
     n2n_srand (n2n_seed()); /* https://github.com/ntop/n2n/pull/373/files */
 
@@ -331,7 +331,7 @@ static signed int peer_tap_ip_sort(struct peer_info *a, struct peer_info *b) {
 }
 
 
-/** The IP address assigned to the edge by the DHCP function of sn. */
+/** The IP address assigned to the edge by the auto ip function of sn. */
 static int assign_one_ip_addr(n2n_sn_t *sss,
                               struct sn_community *comm,
                               n2n_ip_subnet_t *ipaddr) {
@@ -339,8 +339,8 @@ static int assign_one_ip_addr(n2n_sn_t *sss,
 	uint32_t net_id, mask, max_host, host_id = 1;
 	dec_ip_bit_str_t ip_bit_str = {'\0'};
 
-	mask = bitlen2mask(sss->dhcp_addr.net_bitlen);
-	net_id = sss->dhcp_addr.net_addr & mask;
+	mask = bitlen2mask(sss->auto_ip_addr.net_bitlen);
+	net_id = sss->auto_ip_addr.net_addr & mask;
 	max_host = ~mask;
 
 	HASH_SORT(comm->edges, peer_tap_ip_sort);
@@ -361,7 +361,7 @@ static int assign_one_ip_addr(n2n_sn_t *sss,
 		}
 	}
 	ipaddr->net_addr = net_id | host_id;
-	ipaddr->net_bitlen = sss->dhcp_addr.net_bitlen;
+	ipaddr->net_bitlen = sss->auto_ip_addr.net_bitlen;
 
 	traceEvent(TRACE_INFO, "Assign IP %s to tap adapter of edge.", ip_subnet_to_str(ip_bit_str, ipaddr));
 	return 0;

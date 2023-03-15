@@ -97,7 +97,7 @@ static char *openssl_err_as_string (void) {
 
 /* convert a given number of bytes from memory to hex string; taken (and modified) from
    https://stackoverflow.com/questions/6357031/how-do-you-convert-a-byte-array-to-a-hexadecimal-string-in-c */
-const char* to_hex(unsigned char * in, size_t insz, char * out, size_t outsz)
+static const char* to_hex(unsigned char * in, size_t insz, char * out, size_t outsz)
 {
   unsigned char * pin = in;
   const char * hex = "0123456789abcdef";

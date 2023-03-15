@@ -4,7 +4,7 @@ include(CheckFunctionExists)
 SET(CMAKE_VERBOSE_MAKEFILE ON)
 
 # N2n release information
-set(N2N_VERSION "2.8.1")
+set(N2N_VERSION "2.8.2")
 set(N2N_OSNAME ${CMAKE_SYSTEM})
 execute_process(
         COMMAND git --version
@@ -24,7 +24,7 @@ execute_process(
 )
 string(REGEX REPLACE "\n$" "" GIT_REV "${GIT_REV}")
 string(REGEX REPLACE "\n$" "" GIT_ID "${GIT_ID}")
-set(N2N_VERSION "${N2N_VERSION}.r${GIT_REV}.${GIT_ID}")
+set(N2N_VERSION "${N2N_VERSION}_r${GIT_REV}_${GIT_ID}")
 MESSAGE(STATUS "Build from git rev: ${N2N_VERSION}")
 endif (GIT_EXIST)
 

@@ -8,7 +8,7 @@ if test -d ".git"; then
 # NOTE: keep in sync with the definitions for configure.in files under the packages folder
 GIT_COMMITS=`git rev-list --count HEAD`
 GIT_REVISION=`git rev-parse --short HEAD`
-GIT_RELEASE="${N2N_VERSION_SHORT}.r${GIT_COMMITS}.${GIT_REVISION}"
+GIT_RELEASE="${N2N_VERSION_SHORT}_r${GIT_COMMITS}_${GIT_REVISION}"
 else
 GIT_RELEASE=${N2N_VERSION_SHORT}
 fi
