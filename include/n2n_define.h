@@ -76,7 +76,7 @@
 #define HEADER_ENCRYPTION_NONE          1
 #define HEADER_ENCRYPTION_ENABLED       2
 
-#define DEFAULT_MTU   1386
+#define DEFAULT_MTU   1328
 
 #define HASH_ADD_PEER(head,add)				\
   HASH_ADD(hh,head,mac_addr,sizeof(n2n_mac_t),add)
