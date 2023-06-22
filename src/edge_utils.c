@@ -1290,12 +1290,12 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 	                    "community: %s\n",
 	                    eee->conf.community_name);
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "    id    MAC                lan_ip           wan_ip                   lseen\n");
+	                    "    id    mac                lan_ip           wan_ip                   lseen\n");
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
 	                    "---v2------------------------------------------------------------------v2---\n");
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "supernode_forward:\n");
+	                    "PsP_with:\n");
 	num = 0;
 	HASH_ITER(hh, eee->pending_peers, peer, tmpPeer) {
 		++num_pending_peers;
@@ -1313,7 +1313,7 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 	}
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "peer_to_peer:\n");
+	                    "P2P_with:\n");
 	num = 0;
 	HASH_ITER(hh, eee->known_peers, peer, tmpPeer) {
 		++num_known_peers;
@@ -1333,20 +1333,39 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
 	                    "---v2------------------------------------------------------------------v2---\n");
 
+// Count the number of seconds running time
+    unsigned long uptime = time(NULL) - eee->start_time;
+
+// Converts the number of seconds to days, hours, minutes, and seconds
+    unsigned long days = uptime / (24 * 60 * 60);
+    uptime %= (24 * 60 * 60);
+    unsigned long hours = uptime / (60 * 60);
+//    uptime %= (60 * 60);
+//    unsigned long minutes = uptime / 60;
+//    unsigned long seconds = uptime % 60;
+
+// Printf format string and appends it to the buffer
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "uptime %lu | ",
-	                    time(NULL) - eee->start_time);
+	                    "uptime %lud_%luh | ", days, hours);
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "pend_peers %u | ",
+	                    "pend/known_peers %u/",
 	                    num_pending_peers);
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "known_peers %u | ",
+	                    "%u | ",
 	                    num_known_peers);
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "transop %u,%u\n",
+	                    "last_super/p2p %ld/",
+	                    (now - eee->last_sup));
+
+	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
+	                    "%lds ago\n",
+	                    (now - eee->last_p2p));
+
+	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
+	                    "transop %u,%u | ",
 	                    (unsigned int) eee->transop.tx_cnt,
 	                    (unsigned int) eee->transop.rx_cnt);
 
@@ -1356,17 +1375,9 @@ static void readFromMgmtSocket(n2n_edge_t *eee, int *keep_running) {
 	                    (unsigned int) eee->stats.rx_sup);
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "p2p %u,%u | ",
+	                    "p2p %u,%u\n",
 	                    (unsigned int) eee->stats.tx_p2p,
 	                    (unsigned int) eee->stats.rx_p2p);
-
-	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "last_super  %ld sec ago | ",
-	                    (now - eee->last_sup));
-
-	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
-	                    "last_p2p  %ld sec ago\n",
-	                    (now - eee->last_p2p));
 
 	msg_len += snprintf((char *) (udp_buf + msg_len), (N2N_PKT_BUF_SIZE - msg_len),
 	                    "\nType \"help\" to see more commands.\n\n");

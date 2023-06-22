@@ -496,8 +496,20 @@ static int process_mgmt(n2n_sn_t *sss,
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "---v2------------------------------------------------------------------v2---\n");
 
-	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "uptime %lu | ", (now - sss->start_time));
+// Count the number of seconds running time
+    unsigned long uptime = now - sss->start_time;
+
+// Converts the number of seconds to days, hours, minutes, and seconds
+    unsigned long days = uptime / (24 * 60 * 60);
+    uptime %= (24 * 60 * 60);
+    unsigned long hours = uptime / (60 * 60);
+//    uptime %= (60 * 60);
+//    unsigned long minutes = uptime / 60;
+//    unsigned long seconds = uptime % 60; 
+
+// Printf format string and appends it to the buffer
+    ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                        "uptime %lud_%luh | ", days, hours);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "edges %u | ",
@@ -508,32 +520,32 @@ static int process_mgmt(n2n_sn_t *sss,
 	                    "cmnts %u | ", HASH_COUNT(sss->communities));
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "reg_sup %u | ",
-	                    (unsigned int) sss->stats.reg_super);
-
-	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "reg_nak %u | ",
 	                    (unsigned int) sss->stats.reg_super_nak);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "errors %u \n",
+	                    "errs %u | ",
 	                    (unsigned int) sss->stats.errors);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "fwd %u | ",
-	                    (unsigned int) sss->stats.fwd);
+	                    "last_reg %lus ago\n",
+	                    (long unsigned int) (now - sss->stats.last_reg_super));
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "broadcast %u | ",
 	                    (unsigned int) sss->stats.broadcast);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "last_fwd  %lu sec ago | ",
-	                    (long unsigned int) (now - sss->stats.last_fwd));
+	                    "reg_sup %u | ",
+	                    (unsigned int) sss->stats.reg_super);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "last_reg  %lu sec ago\n\n",
-	                    (long unsigned int) (now - sss->stats.last_reg_super));
+	                    "fwd %u | ",
+	                    (unsigned int) sss->stats.fwd);
+
+	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+	                    "last_fwd %lus ago\n\n",
+	                    (long unsigned int) (now - sss->stats.last_fwd));
 
 	sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
 
