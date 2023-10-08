@@ -103,9 +103,10 @@ uint64_t n2n_seed (void) {
   size_t i;
 
 #ifdef SYS_getrandom
+  int fd = open("/dev/urandom", O_RDONLY);
   int rc = -1;
   for(i = 0; (i < RND_RETRIES) && (rc != sizeof(seed)); i++) {
-    rc = syscall (SYS_getrandom, &seed, sizeof(seed), GRND_NONBLOCK);
+    rc = read(fd, &seed, sizeof(seed));
     // if successful, rc should contain the requested number of random bytes
     if(rc != sizeof(seed)) {
       if (errno != EAGAIN) {
