@@ -337,7 +337,7 @@ static int setOption(int optkey, char *optargument, n2n_tuntap_priv_config_t *ec
         traceEvent(TRACE_NORMAL, "the use of the solitary -A switch is deprecated and might not be supported in future versions. "
 		   "please use -A3 instead to choose a the AES-CBC cipher for payload encryption.");
 
-      	cipher = N2N_TRANSFORM_ID_AESCBC; // default, if '-A' only   
+      	cipher = N2N_TRANSFORM_ID_AESCBC; // default, if '-A' only
       }
 
       setPayloadEncryption(conf, cipher);
@@ -355,7 +355,7 @@ static int setOption(int optkey, char *optargument, n2n_tuntap_priv_config_t *ec
   case 'z':
     {
       int compression;
-      
+
       if (optargument) {
         compression = atoi(optargument);
       } else
@@ -390,7 +390,6 @@ static int setOption(int optkey, char *optargument, n2n_tuntap_priv_config_t *ec
       break;
     }
 #endif
-
   case 'p':
     {
       conf->local_port = atoi(optargument);
@@ -587,7 +586,7 @@ static int loadFromFile(const char *path, n2n_edge_conf_t *conf, n2n_tuntap_priv
       }
     } else if(line[0] == '-') { /* short opt */
       char *equal;
-      
+
       key = &line[1], line_len--;
 
       equal = strchr(line, '=');
@@ -826,7 +825,7 @@ int main(int argc, char* argv[]) {
 #if defined(HAVE_OPENSSL_1_1)
   traceEvent(TRACE_NORMAL, "Using %s", OpenSSL_version(0));
 #endif
-  
+
   traceEvent(TRACE_NORMAL, "Using compression: %s.", compression_str(conf.compression));
   traceEvent(TRACE_NORMAL, "Using %s cipher.", transop_str(conf.transop_id));
 
@@ -836,7 +835,7 @@ int main(int argc, char* argv[]) {
 #ifndef WIN32
   /* If running suid root then we need to setuid before using the force. */
   if(setuid(0) != 0)
-    traceEvent(TRACE_ERROR, "Unable to become root [%u/%s]", errno, strerror(errno)); 
+    traceEvent(TRACE_ERROR, "Unable to become root [%u/%s]", errno, strerror(errno));
   /* setgid(0); */
 #endif
 

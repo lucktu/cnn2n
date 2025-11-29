@@ -200,6 +200,8 @@ struct peer_info {
 	n2n_mac_t        mac_addr;
 	n2n_ip_subnet_t  dev_addr;
 	n2n_sock_t       sock;
+    n2n_sock_t       local_socks[N2N_MAX_LOCAL_ADDRS];
+    uint8_t          num_local_socks;
 	int              timeout;
 	time_t           last_seen;
 	time_t           last_p2p;

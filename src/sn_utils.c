@@ -20,6 +20,22 @@
 
 #define HASH_FIND_COMMUNITY(head, name, out) HASH_FIND_STR(head, name, out)
 
+/* Check if the address is a private IP */
+static int is_private_ip(const n2n_sock_t *sock) {
+    if (sock->family != AF_INET) return 0;
+
+    uint32_t ip = ntohl(*(uint32_t*)sock->addr.v4);
+
+    /* 10.0.0.0/8 */
+    if ((ip & 0xFF000000) == 0x0A000000) return 1;
+    /* 172.16.0.0/12 */
+    if ((ip & 0xFFF00000) == 0xAC100000) return 1;
+    /* 192.168.0.0/16 */
+    if ((ip & 0xFFFF0000) == 0xC0A80000) return 1;
+
+    return 0;
+}
+
 static int try_forward(n2n_sn_t * sss,
 		       const struct sn_community *comm,
 		       const n2n_common_t * cmn,
@@ -299,6 +315,23 @@ static int update_edge(n2n_sn_t *sss,
 		memcpy(&(scan->sock), sender_sock, sizeof(n2n_sock_t));
 		scan->last_valid_time_stamp = initial_time_stamp();
 
+		/* Store all LAN addresses */
+		scan->num_local_socks = 0;
+		uint8_t i;
+		for (i = 0; i < reg->num_local_socks && i < N2N_MAX_LOCAL_ADDRS; i++) {
+		    if (is_private_ip(&reg->local_socks[i])) {
+		        memcpy(&(scan->local_socks[scan->num_local_socks]),
+		               &reg->local_socks[i], sizeof(n2n_sock_t));
+ 		       scan->num_local_socks++;
+		    }
+		}
+
+		if (scan->num_local_socks > 0) {
+ 		   traceEvent(TRACE_INFO, "Stored %d LAN address(es) for edge", scan->num_local_socks);
+		} else {
+		    traceEvent(TRACE_DEBUG, "No LAN addresses stored for edge");
+		}
+
 		HASH_ADD_PEER(comm->edges, scan);
 
 		traceEvent(TRACE_INFO, "update_edge created   %s ==> %s",
@@ -505,7 +538,7 @@ static int process_mgmt(n2n_sn_t *sss,
     unsigned long hours = uptime / (60 * 60);
 //    uptime %= (60 * 60);
 //    unsigned long minutes = uptime / 60;
-//    unsigned long seconds = uptime % 60; 
+//    unsigned long seconds = uptime % 60;
 
 // Printf format string and appends it to the buffer
     ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
@@ -980,6 +1013,16 @@ static int process_udp(n2n_sn_t * sss,
       pi.aflags = 0;
       memcpy( pi.mac, query.targetMac, sizeof(n2n_mac_t) );
       pi.sock = scan->sock;
+
+      /* Add all LAN addresses */
+      pi.num_local_socks = scan->num_local_socks;
+      if (pi.num_local_socks > N2N_MAX_LOCAL_ADDRS) {
+          pi.num_local_socks = N2N_MAX_LOCAL_ADDRS;
+      }
+	  uint8_t i;
+      for (i = 0; i < pi.num_local_socks; i++) {
+          memcpy(&pi.local_socks[i], &scan->local_socks[i], sizeof(n2n_sock_t));
+      }
 
       encode_PEER_INFO( encbuf, &encx, &cmn2, &pi );
 

@@ -32,6 +32,7 @@
 #define N2N_COOKIE_SIZE                 4
 #define N2N_PKT_BUF_SIZE                2048
 #define N2N_SOCKBUF_SIZE                64      /* string representation of INET or INET6 sockets */
+#define N2N_MAX_LOCAL_ADDRS             4       /* Maximum number of local addresses */
 
 #define N2N_MULTICAST_PORT              1968
 #define N2N_MULTICAST_GROUP             "224.0.0.68"
@@ -150,6 +151,8 @@ typedef struct n2n_REGISTER_SUPER {
 	n2n_cookie_t        cookie;         /**< Link REGISTER_SUPER and REGISTER_SUPER_ACK */
 	n2n_mac_t           edgeMac;        /**< MAC to register with edge sending socket */
 	n2n_ip_subnet_t     dev_addr;       /**< IP address of the tuntap adapter. */
+    uint8_t             num_local_socks;                  /**< Number of local addresses */
+    n2n_sock_t          local_socks[N2N_MAX_LOCAL_ADDRS]; /**<  Multiple LAN addresses */
 	n2n_auth_t          auth;           /**< Authentication scheme and tokens */
 } n2n_REGISTER_SUPER_t;
 
@@ -184,6 +187,8 @@ typedef struct n2n_PEER_INFO {
 	uint16_t             aflags;
 	n2n_mac_t            mac;
 	n2n_sock_t           sock;
+    uint8_t              num_local_socks;
+    n2n_sock_t           local_socks[N2N_MAX_LOCAL_ADDRS];
 } n2n_PEER_INFO_t;
 
 

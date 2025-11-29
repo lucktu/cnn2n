@@ -302,6 +302,12 @@ int encode_REGISTER_SUPER(uint8_t *base,
 	retval += encode_mac(base, idx, reg->edgeMac);
 	retval += encode_uint32(base, idx, reg->dev_addr.net_addr);
 	retval += encode_uint8(base, idx, reg->dev_addr.net_bitlen);
+	retval += encode_uint8(base, idx, reg->num_local_socks);  /* Encode number of local addresses */
+	/* Encode each local address */
+	uint8_t i;
+	for (i = 0; i < reg->num_local_socks && i < N2N_MAX_LOCAL_ADDRS; i++) {
+        retval += encode_sock(base, idx, &(reg->local_socks[i]));
+	}
 	retval += encode_uint16(base, idx, 0); /* NULL auth scheme */
 	retval += encode_uint16(base, idx, 0); /* No auth data */
 
@@ -320,6 +326,14 @@ int decode_REGISTER_SUPER(n2n_REGISTER_SUPER_t *reg,
 	retval += decode_mac(reg->edgeMac, base, rem, idx);
 	retval += decode_uint32(&(reg->dev_addr.net_addr), base, rem, idx);
 	retval += decode_uint8(&(reg->dev_addr.net_bitlen), base, rem, idx);
+	retval += decode_uint8(&(reg->num_local_socks), base, rem, idx);  /* Decode number of local addresses */
+	if (reg->num_local_socks > N2N_MAX_LOCAL_ADDRS) { /* Decode each local address */
+		reg->num_local_socks = N2N_MAX_LOCAL_ADDRS;
+	}
+	uint8_t i;
+	for (i = 0; i < reg->num_local_socks; i++) {
+	    retval += decode_sock(&(reg->local_socks[i]), base, rem, idx);
+	}
 	retval += decode_uint16(&(reg->auth.scheme), base, rem, idx);
 	retval += decode_uint16(&(reg->auth.toksize), base, rem, idx);
 	retval += decode_buf(reg->auth.token, reg->auth.toksize, base, rem, idx);
@@ -492,6 +506,11 @@ int encode_PEER_INFO(uint8_t *base,
 	retval += encode_uint16(base, idx, pkt->aflags);
 	retval += encode_mac(base, idx, pkt->mac);
 	retval += encode_sock(base, idx, &pkt->sock);
+	retval += encode_uint8(base, idx, pkt->num_local_socks); /* Encode number of local addresses */
+	uint8_t i;
+	for (i = 0; i < pkt->num_local_socks && i < N2N_MAX_LOCAL_ADDRS; i++) { /* Encode each local address */
+		retval += encode_sock(base, idx, &(pkt->local_socks[i]));
+	}
 
 	return retval;
 }
@@ -507,6 +526,14 @@ int decode_PEER_INFO(n2n_PEER_INFO_t *pkt,
 	retval += decode_uint16(&(pkt->aflags), base, rem, idx);
 	retval += decode_mac(pkt->mac, base, rem, idx);
 	retval += decode_sock(&pkt->sock, base, rem, idx);
+	retval += decode_uint8(&(pkt->num_local_socks), base, rem, idx); /* Decode number of local addresses */
+	if (pkt->num_local_socks > N2N_MAX_LOCAL_ADDRS) { /* Decode each local address */
+		pkt->num_local_socks = N2N_MAX_LOCAL_ADDRS;
+	}
+	uint8_t i;
+	for (i = 0; i < pkt->num_local_socks; i++) {
+		retval += decode_sock(&(pkt->local_socks[i]), base, rem, idx);
+	}
 
 	return retval;
 }

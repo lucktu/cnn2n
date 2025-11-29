@@ -18,6 +18,81 @@
 
 #include "n2n.h"
 #include "edge_utils_win32.h"
+#ifndef WIN32
+#include <ifaddrs.h>
+#include <arpa/inet.h>
+#endif
+
+/* Check if the address is a private IP */
+static int is_private_ip(const n2n_sock_t *sock) {
+    if (sock->family != AF_INET) return 0;
+
+    uint32_t ip = ntohl(*(uint32_t*)sock->addr.v4);
+
+    /* 10.0.0.0/8 */
+    if ((ip & 0xFF000000) == 0x0A000000) return 1;
+    /* 172.16.0.0/12 */
+    if ((ip & 0xFFF00000) == 0xAC100000) return 1;
+    /* 192.168.0.0/16 */
+    if ((ip & 0xFFFF0000) == 0xC0A80000) return 1;
+
+    return 0;
+}
+
+/* Get all local LAN addresses from network interfaces */
+static int get_all_local_addresses(n2n_sock_t *local_socks, uint8_t *num_addrs, uint8_t max_addrs) {
+#ifndef WIN32
+    struct ifaddrs *ifaddr, *ifa;
+    uint8_t count = 0;
+
+    *num_addrs = 0;
+
+    if (getifaddrs(&ifaddr) == -1) {
+        traceEvent(TRACE_WARNING, "getifaddrs() failed");
+        return -1;
+    }
+
+    /* Iterate through all network interfaces and collect private IPs */
+    for (ifa = ifaddr; ifa != NULL && count < max_addrs; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL) continue;
+
+        if (ifa->ifa_addr->sa_family == AF_INET) {
+            struct sockaddr_in *addr = (struct sockaddr_in *)ifa->ifa_addr;
+            uint32_t ip = ntohl(addr->sin_addr.s_addr);
+
+            /* Skip loopback */
+            if ((ip & 0xFF000000) == 0x7F000000) continue;
+
+            /* Check if it's a private IP */
+            if ((ip & 0xFF000000) == 0x0A000000 ||      /* 10.0.0.0/8 */
+                (ip & 0xFFF00000) == 0xAC100000 ||      /* 172.16.0.0/12 */
+                (ip & 0xFFFF0000) == 0xC0A80000) {      /* 192.168.0.0/16 */
+
+            memset(&local_socks[count], 0, sizeof(n2n_sock_t));  /* Clear entire structure first */
+            local_socks[count].family = AF_INET;
+            memcpy(local_socks[count].addr.v4, &addr->sin_addr.s_addr, 4);
+            local_socks[count].port = 0;
+
+                traceEvent(TRACE_DEBUG, "Found local LAN address [%d]: %s",
+                          count, inet_ntoa(addr->sin_addr));
+                count++;
+            }
+        }
+    }
+
+    freeifaddrs(ifaddr);
+    *num_addrs = count;
+
+    if (count == 0) {
+        traceEvent(TRACE_INFO, "No private IP addresses found");
+        return -1;
+    }
+
+    return 0;
+#else
+    return get_all_local_addresses_win32(local_socks, num_addrs, max_addrs);
+#endif
+}
 
 /* heap allocation for compression as per lzo example doc */
 #define HEAP_ALLOC(var,size) lzo_align_t __LZO_MMODEL var [ ((size) + (sizeof(lzo_align_t) - 1)) / sizeof(lzo_align_t) ]
@@ -697,9 +772,12 @@ static ssize_t sendto_sock(int fd, const void * buf,
   struct sockaddr_in peer_addr;
   ssize_t sent;
 
-  if(!dest->family)
+  if(!dest->family || dest->port == 0) {
     // Invalid socket
+    traceEvent(TRACE_ERROR, "sendto failed (22) Invalid argument");
+    traceEvent(TRACE_ERROR, "  dest: family=%d port=%d", dest->family, dest->port);
     return 0;
+  }
 
   fill_sockaddr((struct sockaddr *) &peer_addr,
 		sizeof(peer_addr),
@@ -707,8 +785,7 @@ static ssize_t sendto_sock(int fd, const void * buf,
 
   sent = sendto(fd, buf, len, 0/*flags*/,
 		(struct sockaddr *)&peer_addr, sizeof(struct sockaddr_in));
-  if(sent < 0)
-    {
+  if(sent < 0) {
       char * c = strerror(errno);
       traceEvent(TRACE_ERROR, "sendto failed (%d) %s", errno, c);
     }
@@ -773,6 +850,31 @@ static void send_register_super(n2n_edge_t *eee, const n2n_sock_t *supernode, in
 	reg.dev_addr.net_bitlen = mask2bitlen(ntohl(eee->device.device_mask));
 	reg.auth.scheme = 0; /* No auth yet */
 
+	/* Get and set all local LAN addresses */
+	if (get_all_local_addresses(reg.local_socks, &reg.num_local_socks, N2N_MAX_LOCAL_ADDRS) == 0) {
+	    char buf[N2N_SOCKBUF_SIZE];
+	    uint8_t valid_count = 0;
+
+	    /* Validate each address */
+		uint8_t i;
+	    for (i = 0; i < reg.num_local_socks; i++) {
+ 	       if (reg.local_socks[i].family == AF_INET) {
+ 	           traceEvent(TRACE_DEBUG, "  [%d]: %s", i, sock_to_cstr(buf, &reg.local_socks[i]));
+ 	           valid_count++;
+  	      }
+	    }
+
+	    if (valid_count > 0) {
+ 	       traceEvent(TRACE_INFO, "Sending %d valid local LAN address(es)", valid_count);
+	    } else {
+	        reg.num_local_socks = 0;  /* No valid addresses */
+ 	   }
+	} else {
+	    reg.num_local_socks = 0;
+	    traceEvent(TRACE_DEBUG, "No local LAN addresses to send");
+	}
+
+	/* Get and set local LAN address */
 	idx = 0;
 	encode_mac(reg.edgeMac, &idx, eee->device.mac_addr);
 
@@ -1449,7 +1551,11 @@ static int find_peer_destination(n2n_edge_t * eee,
       /* NOTE: registration will be performed upon the receival of the next response packet */
     } else {
       /* Valid known peer found */
+      /* Use the address that established P2P connection */
+      /* The sock field is updated when REGISTER_ACK is received */
       memcpy(destination, &scan->sock, sizeof(n2n_sock_t));
+      traceEvent(TRACE_DEBUG, "Using established P2P address for peer");
+      retval = 1;
       retval=1;
     }
   }
@@ -2006,37 +2112,30 @@ void readFromIPSocket(n2n_edge_t * eee, int in_sock) {
       }
       case MSG_TYPE_PEER_INFO: {
         n2n_PEER_INFO_t pi;
-        struct peer_info *  scan;
-        decode_PEER_INFO( &pi, &cmn, udp_buf, &rem, &idx );
+        struct peer_info *scan;
 
-        if(eee->conf.header_encryption == HEADER_ENCRYPTION_ENABLED) {
-          if(!find_peer_time_stamp_and_verify (eee, definitely_from_supernode, null_mac, stamp)) {
-            traceEvent(TRACE_DEBUG, "readFromIPSocket dropped PEER_INFO due to time stamp error.");
-            return;
-          }
-        }
+        decode_PEER_INFO(&pi, &cmn, udp_buf, &rem, &idx);
 
-        if(!is_valid_peer_sock(&pi.sock)) {
-          traceEvent(TRACE_DEBUG, "Skip invalid PEER_INFO %s [%s]",
-                     sock_to_cstr(sockbuf1, &pi.sock),
-                     macaddr_str(mac_buf1, pi.mac) );
-          break;
-        }
-
-	  HASH_FIND_PEER(eee->pending_peers, pi.mac, scan);
-	  if(scan) {
+        HASH_FIND_PEER(eee->pending_peers, pi.mac, scan);
+        if (scan) {
             scan->sock = pi.sock;
-            traceEvent(TRACE_INFO, "Rx PEER_INFO for %s: is at %s",
-                       macaddr_str(mac_buf1, pi.mac),
-                       sock_to_cstr(sockbuf1, &pi.sock));
-            send_register(eee, &scan->sock, scan->mac_addr);
-	  } else {
-            traceEvent(TRACE_INFO, "Rx PEER_INFO unknown peer %s",
-                       macaddr_str(mac_buf1, pi.mac) );
-	  }
 
-	  break;
-	}
+            uint8_t i;
+            for (i = 0; i < pi.num_local_socks && i < N2N_MAX_LOCAL_ADDRS; i++) {
+                if (is_private_ip(&pi.local_socks[i])) {
+                    memcpy(&(scan->local_socks[i]), &pi.local_socks[i], sizeof(n2n_sock_t));
+
+                    scan->local_socks[i].port = pi.sock.port;
+					traceEvent(TRACE_DEBUG, "Set LAN address [%d] port to %d", i, pi.sock.port);
+
+                    send_register(eee, &scan->local_socks[i], scan->mac_addr);
+                }
+            }
+
+            send_register(eee, &scan->sock, scan->mac_addr);
+        }
+        break;
+    }
     default:
       /* Not a known message type */
       traceEvent(TRACE_WARNING, "Unable to handle packet type %d: ignored", (signed int)msg_type);
