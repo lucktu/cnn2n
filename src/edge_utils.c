@@ -1523,57 +1523,52 @@ static int check_query_peer_info(n2n_edge_t *eee, time_t now, n2n_mac_t mac) {
 static int find_peer_destination(n2n_edge_t * eee,
                                  n2n_mac_t mac_address,
                                  n2n_sock_t * destination) {
-  struct peer_info *scan;
-  macstr_t mac_buf;
-  n2n_sock_str_t sockbuf;
-  int retval=0;
-  time_t now = time(NULL);
+    struct peer_info *scan;
+    macstr_t mac_buf;
+    n2n_sock_str_t sockbuf;
+    int retval = 0;
+    time_t now = time(NULL);
 
-  if(is_multi_broadcast(mac_address)) {
-    traceEvent(TRACE_DEBUG, "Multicast or broadcast destination peer, using supernode");
-    memcpy(destination, &(eee->supernode), sizeof(struct sockaddr_in));
-    return(0);
-  }
-
-  traceEvent(TRACE_DEBUG, "Searching destination peer for MAC %02X:%02X:%02X:%02X:%02X:%02X",
-	     mac_address[0] & 0xFF, mac_address[1] & 0xFF, mac_address[2] & 0xFF,
-	     mac_address[3] & 0xFF, mac_address[4] & 0xFF, mac_address[5] & 0xFF);
-
-  HASH_FIND_PEER(eee->known_peers, mac_address, scan);
-
-  if(scan && (scan->last_seen > 0)) {
-    if((now - scan->last_p2p) >= (scan->timeout / 2)) {
-      /* Too much time passed since we saw the peer, need to register again
-       * since the peer address may have changed. */
-      traceEvent(TRACE_DEBUG, "Refreshing idle known peer");
-      HASH_DEL(eee->known_peers, scan);
-      free(scan);
-      /* NOTE: registration will be performed upon the receival of the next response packet */
-    } else {
-      /* Valid known peer found */
-      /* Use the address that established P2P connection */
-      /* The sock field is updated when REGISTER_ACK is received */
-      memcpy(destination, &scan->sock, sizeof(n2n_sock_t));
-      traceEvent(TRACE_DEBUG, "Using established P2P address for peer");
-      retval = 1;
-      retval=1;
+    if(is_multi_broadcast(mac_address)) {
+        memcpy(destination, &(eee->supernode), sizeof(struct sockaddr_in));
+        return(0);
     }
-  }
 
-  if(retval == 0) {
-    memcpy(destination, &(eee->supernode), sizeof(struct sockaddr_in));
-    traceEvent(TRACE_DEBUG, "P2P Peer [MAC=%02X:%02X:%02X:%02X:%02X:%02X] not found, using supernode",
-	       mac_address[0] & 0xFF, mac_address[1] & 0xFF, mac_address[2] & 0xFF,
-	       mac_address[3] & 0xFF, mac_address[4] & 0xFF, mac_address[5] & 0xFF);
+    HASH_FIND_PEER(eee->known_peers, mac_address, scan);
 
-    check_query_peer_info(eee, now, mac_address);
-  }
+    if(scan && (scan->last_seen > 0)) {
+        if((now - scan->last_p2p) >= (scan->timeout / 2)) {
+            traceEvent(TRACE_DEBUG, "Refreshing idle known peer");
+            HASH_DEL(eee->known_peers, scan);
+            free(scan);
+        } else {
+            /* CRITICAL: Check if this is the peer's edge IP to block */
+            if (scan->sock.family == AF_INET) {
+                uint32_t peer_ip = ntohl(*(uint32_t*)scan->sock.addr.v4);
+                /* Block if this matches the peer's edge IP (same subnet as our edge) */
+                uint32_t my_edge_ip = ntohl(eee->device.ip_addr);
+                uint32_t my_edge_net = my_edge_ip & 0xFFFFFF00; /* /24 mask */
+                uint32_t peer_net = peer_ip & 0xFFFFFF00;
 
-  traceEvent(TRACE_DEBUG, "find_peer_address (%s) -> [%s]",
-	     macaddr_str(mac_buf, mac_address),
-	     sock_to_cstr(sockbuf, destination));
+                if (peer_net == my_edge_net && peer_ip != my_edge_ip) {
+                    traceEvent(TRACE_DEBUG, "Blocking peer edge IP %s, using supernode",
+                               sock_to_cstr(sockbuf, &scan->sock));
+                    memcpy(destination, &(eee->supernode), sizeof(n2n_sock_t));
+                    return 0;
+                }
+            }
 
-  return retval;
+            memcpy(destination, &scan->sock, sizeof(n2n_sock_t));
+            retval = 1;
+        }
+    }
+
+    if(retval == 0) {
+        memcpy(destination, &(eee->supernode), sizeof(struct sockaddr_in));
+        check_query_peer_info(eee, now, mac_address);
+    }
+
+    return retval;
 }
 
 /* ***************************************************** */
