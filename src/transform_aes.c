@@ -62,13 +62,20 @@ typedef struct transop_aes {
 static int transop_deinit_aes(n2n_trans_op_t *arg) {
   transop_aes_t *priv = (transop_aes_t *)arg->priv;
 
+  if(priv) {
 #ifdef HAVE_OPENSSL_1_1
-  EVP_CIPHER_CTX_free(priv->enc_ctx);
-  EVP_CIPHER_CTX_free(priv->dec_ctx);
+    if(priv->enc_ctx) {
+      EVP_CIPHER_CTX_free(priv->enc_ctx);
+      priv->enc_ctx = NULL;
+    }
+    if(priv->dec_ctx) {
+      EVP_CIPHER_CTX_free(priv->dec_ctx);
+      priv->dec_ctx = NULL;
+    }
 #endif
-
-  if(priv)
     free(priv);
+  }
+  arg->priv = NULL;
 
   return 0;
 }
@@ -184,7 +191,7 @@ static int transop_encode_aes(n2n_trans_op_t * arg,
       encode_buf(outbuf, &idx, iv_seed, TRANSOP_AES_IV_SEED_SIZE);
 
       /* Encrypt the assembly contents and write the ciphertext after the iv seed. */
-      /* len is set to the length of the cipher plain text to be encrpyted 
+      /* len is set to the length of the cipher plain text to be encrpyted
 	 which is (in this case) identical to original packet lentgh */
       len = in_len;
 
@@ -294,7 +301,7 @@ static int transop_decode_aes(n2n_trans_op_t * arg,
 		evp_plaintext_len = evp_len;
 		if(1 == EVP_DecryptFinal_ex(ctx, assembly + evp_len, &evp_len)) {
 		  evp_plaintext_len += evp_len;
-		  
+
 		  if(evp_plaintext_len != len)
 		    traceEvent(TRACE_ERROR, "decode_aes openssl decryption: decrypted %u bytes where %u were expected.\n",
 			       evp_plaintext_len, len);
@@ -312,13 +319,13 @@ static int transop_decode_aes(n2n_trans_op_t * arg,
 #else
 	  AES_cbc_encrypt((inbuf + TRANSOP_AES_PREAMBLE_SIZE),
 			  assembly, /* destination */
-			  len, 
+			  len,
 			  &(priv->dec_key),
 			  dec_ivec, AES_DECRYPT);
 #endif
 	  /* last byte is how much was padding: max value should be
 	   * AES_BLOCKSIZE-1 */
-	  padding = assembly[ len-1 ] & 0xff; 
+	  padding = assembly[ len-1 ] & 0xff;
 
 	  if(len >= padding) {
 	    /* strictly speaking for this to be an ethernet packet
@@ -327,8 +334,8 @@ static int transop_decode_aes(n2n_trans_op_t * arg,
 	    traceEvent(TRACE_DEBUG, "padding = %u", padding);
 	    len -= padding;
 
-	    memcpy(outbuf, 
-		   assembly, 
+	    memcpy(outbuf,
+		   assembly,
 		   len);
 	  } else
 	    traceEvent(TRACE_WARNING, "UDP payload decryption failed.");

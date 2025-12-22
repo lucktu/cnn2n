@@ -346,8 +346,11 @@ n2n_edge_t* edge_init(const n2n_edge_conf_t *conf, int *rv) {
   return(eee);
 
  edge_init_error:
-  if(eee)
+  if(eee) {
+    if(eee->transop.deinit)
+      eee->transop.deinit(&eee->transop);
     free(eee);
+  }
   *rv = rc;
   return(NULL);
 }
@@ -2801,8 +2804,13 @@ void edge_init_conf_defaults(n2n_edge_conf_t *conf) {
 	conf->tuntap_ip_mode = TUNTAP_IP_MODE_SN_ASSIGN;
 
 	if (getenv("N2N_KEY")) {
-		conf->encrypt_key = strdup(getenv("N2N_KEY"));
-		conf->transop_id = N2N_TRANSFORM_ID_TWOFISH;
+   	 const char* env_key = getenv("N2N_KEY");
+    	conf->encrypt_key = strdup(env_key);
+   	 if(!conf->encrypt_key) {
+      	  traceEvent(TRACE_ERROR, "Failed to allocate memory for encryption key");
+       	 return;
+    	}
+   	 conf->transop_id = N2N_TRANSFORM_ID_TWOFISH;
 	}
 }
 
