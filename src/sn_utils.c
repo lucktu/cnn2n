@@ -493,7 +493,7 @@ static int process_mgmt(n2n_sn_t *sss,
                         time_t now) {
 	char resbuf[N2N_SN_PKTBUF_SIZE];
 	size_t ressize = 0;
-	uint32_t num_edges = 0;
+	uint32_t displayed_edges = 0;
 	uint32_t num = 0;
 	struct sn_community *community, *tmp;
 	struct peer_info *peer, *tmpPeer;
@@ -508,7 +508,6 @@ static int process_mgmt(n2n_sn_t *sss,
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "---v2------------------------------------------------------------------v2---\n");
 	HASH_ITER(hh, sss->communities, community, tmp) {
-		num_edges += HASH_COUNT(community->edges);
 		ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 		                    "%s\n", community->community);
 		sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
@@ -516,11 +515,39 @@ static int process_mgmt(n2n_sn_t *sss,
 
 		num = 0;
 		HASH_ITER(hh, community->edges, peer, tmpPeer) {
-			ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-			                    "\%3u  %-17s  %-18s  %-21s      %1lu\n",
-			                    ++num, macaddr_str(mac_buf, peer->mac_addr),
-			                    ip_subnet_to_str(ip_bit_str, &peer->dev_addr),
-			                    sock_to_cstr(sockbuf, &(peer->sock)), now - peer->last_seen);
+  		  /* MAC address validation */
+  		  uint8_t *mac = peer->mac_addr;
+   		 int is_valid_mac = 1;
+
+   		 /* Check for zero MAC */
+   		 if (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 &&
+     		   mac[3] == 0 && mac[4] == 0 && mac[5] == 0) {
+      		  is_valid_mac = 0;
+   		 }
+
+   		 /* Check for broadcast MAC */
+   		 if (mac[0] == 0xFF && mac[1] == 0xFF && mac[2] == 0xFF &&
+     		   mac[3] == 0xFF && mac[4] == 0xFF && mac[5] == 0xFF) {
+       		 is_valid_mac = 0;
+    		}
+
+   		 /* Check for locally administered MAC (00:01:00:xx:xx:xx pattern) */
+   		 if (mac[0] == 0x00 && mac[1] == 0x01 && mac[2] == 0x00) {
+       		 is_valid_mac = 0;
+   		 }
+
+   		 /* Skip invalid MAC addresses */
+   		 if (!is_valid_mac) {
+       		 continue;
+    		}
+
+      displayed_edges++;
+
+    		ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+               		 "\%3u  %-17s  %-18s  %-21s      %1lu\n",
+              		  ++num, macaddr_str(mac_buf, peer->mac_addr),
+               		 ip_subnet_to_str(ip_bit_str, &peer->dev_addr),
+               		 sock_to_cstr(sockbuf, &(peer->sock)), now - peer->last_seen);
 
 			sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
 			ressize = 0;
@@ -541,12 +568,12 @@ static int process_mgmt(n2n_sn_t *sss,
 //    unsigned long seconds = uptime % 60;
 
 // Printf format string and appends it to the buffer
-    ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-                        "uptime %lud_%luh | ", days, hours);
+ ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                     "uptime %lud_%luh | ", days, hours);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "edges %u | ",
-	                    num_edges);
+	                    displayed_edges);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
                         /*"cur_cmnts %u | ", HASH_COUNT(sss->communities));*/
