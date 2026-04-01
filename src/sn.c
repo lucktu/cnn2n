@@ -21,8 +21,6 @@
 #include "n2n.h"
 #include "header_encryption.h"
 
-static n2n_sn_t sss_node;
-
 /** Load the list of allowed communities. Existing/previous ones will be removed
  *
  */
@@ -61,19 +59,23 @@ static int load_allowed_sn_community(n2n_sn_t *sss, char *path) {
 
     s = (struct sn_community*)calloc(1,sizeof(struct sn_community));
 
-    if(s != NULL) {
-      strncpy((char*)s->community, line, N2N_COMMUNITY_SIZE-1);
-      s->community[N2N_COMMUNITY_SIZE-1] = '\0';
-      /* we do not know if header encryption is used in this community,
-       * first packet will show. just in case, setup the key.           */
-      s->header_encryption = HEADER_ENCRYPTION_UNKNOWN;
-      packet_header_setup_key (s->community, &(s->header_encryption_ctx), &(s->header_iv_ctx));
-      HASH_ADD_STR(sss->communities, community, s);
-
-      num_communities++;
-      traceEvent(TRACE_INFO, "Added allowed community '%s' [total: %u]",
-		 (char*)s->community, num_communities);
+    if(s == NULL) {
+      traceEvent(TRACE_ERROR, "Failed to allocate memory for community");
+      fclose(fd);
+      return -1;
     }
+
+    strncpy((char*)s->community, line, N2N_COMMUNITY_SIZE-1);
+    s->community[N2N_COMMUNITY_SIZE-1] = '\0';
+    /* we do not know if header encryption is used in this community,
+     * first packet will show. just in case, setup the key.           */
+    s->header_encryption = HEADER_ENCRYPTION_UNKNOWN;
+    packet_header_setup_key (s->community, &(s->header_encryption_ctx), &(s->header_iv_ctx));
+    HASH_ADD_STR(sss->communities, community, s);
+
+    num_communities++;
+    traceEvent(TRACE_INFO, "Added allowed community '%s' [total: %u]",
+		 (char*)s->community, num_communities);
   }
 
   fclose(fd);
@@ -98,7 +100,7 @@ static void help() {
 	       "   or: supernode <config file> (see supernode.conf)\n");
 	printf("\n");
 	printf("-l <listen port>         | Main listen UDP port (through it, the other edges make the initial contact)\n");
-	printf("-c <file>                | File(with path) containing the allowed communities\n");
+	printf("-c <file>                | File containing the allowed communities\n");
 #if defined(N2N_HAVE_DAEMON)
 	printf("-f                       | Run in foreground\n");
 #endif /* #if defined(N2N_HAVE_DAEMON) */
@@ -111,6 +113,7 @@ static void help() {
 	printf("-h                       | This help message\n");
     printf("-------------------------- new features from ntop's n2n_v2.8.0 --- by github.com/lucktu/cnn2n new2 --------------------------\n");
 	printf("-a <net/bit>             | Set an automatically assigned subnet for edges (default = 172.17.12.0/24)\n");
+	printf("-L <file>                | File associated with rate limiting configuration\n");
 	exit(1);
 }
 
@@ -134,8 +137,8 @@ static int setOption(int optkey, char *_optarg, n2n_sn_t *sss) {
 			uint8_t bitlen;
 
 			if (sscanf(_optarg, "%15[^/]/%hhu", ip_str, &bitlen) != 2) {
-				traceEvent(TRACE_WARNING, "Bad net/bit format '%s'. See -h.", _optarg);
-				break;
+				traceEvent(TRACE_ERROR, "Bad net/bit format '%s'. See -h.", _optarg);
+				return -1;
 			}
 
 			net = inet_addr(ip_str);
@@ -187,6 +190,11 @@ static int setOption(int optkey, char *_optarg, n2n_sn_t *sss) {
 			setTraceLevel(getTraceLevel() + 1);
 			break;
 
+		case 'L': /* rate limit config */
+			strncpy(sss->rate_limit_config_path, _optarg, sizeof(sss->rate_limit_config_path) - 1);
+			sss->rate_limit_config_path[sizeof(sss->rate_limit_config_path) - 1] = '\0';
+			break;
+
 		default:
 			traceEvent(TRACE_WARNING, "Unknown option -%c: Ignored.", (char) optkey);
 			return (-1);
@@ -204,6 +212,7 @@ static const struct option long_options[] = {
 		{"local-port",  required_argument, NULL, 'l'},
 		{"mgmt-port",   required_argument, NULL, 't'},
 		{"auto_ip",     required_argument, NULL, 'a'},
+		{"rate-limit",  required_argument, NULL, 'L'},
 		{"help",        no_argument,       NULL, 'h'},
 		{"verbose",     no_argument,       NULL, 'v'},
 		{NULL, 0,                          NULL, 0}
@@ -215,7 +224,7 @@ static const struct option long_options[] = {
 static int loadFromCLI(int argc, char * const argv[], n2n_sn_t *sss) {
   u_char c;
 
-  while((c = getopt_long(argc, argv, "fl:u:g:t:a:c:vh",
+  while((c = getopt_long(argc, argv, "fl:u:g:t:a:c:vhL:",
 			 long_options, NULL)) != '?') {
     if(c == 255) break;
     setOption(c, optarg, sss);
@@ -228,6 +237,8 @@ static int loadFromCLI(int argc, char * const argv[], n2n_sn_t *sss) {
 
 static char *trim(char *s) {
   char *end;
+
+  if(s == NULL) return NULL;
 
   while(isspace(s[0]) || (s[0] == '"') || (s[0] == '\''))
     s++;
@@ -309,155 +320,128 @@ static int loadFromFile(const char *path, n2n_sn_t *sss) {
 
 /* *************************************************** */
 
-#ifdef __linux__
-static void dump_registrations(int signo) {
-  struct sn_community *comm, *ctmp;
-  struct peer_info *list, *tmp;
-  char buf[32];
-  time_t now = time(NULL);
-  u_int num = 0;
-
-  traceEvent(TRACE_NORMAL, "====================================");
-
-  HASH_ITER(hh, sss_node.communities, comm, ctmp) {
-    traceEvent(TRACE_NORMAL, "Dumping community: %s", comm->community);
-
-    HASH_ITER(hh, comm->edges, list, tmp) {
-      if(list->sock.family == AF_INET)
-	traceEvent(TRACE_NORMAL, "[id: %u][MAC: %s][edge: %u.%u.%u.%u:%u][last seen: %u sec ago]",
-		   ++num, macaddr_str(buf, list->mac_addr),
-		   list->sock.addr.v4[0], list->sock.addr.v4[1], list->sock.addr.v4[2], list->sock.addr.v4[3],
-		   list->sock.port,
-		   now-list->last_seen);
-      else
-	traceEvent(TRACE_NORMAL, "[id: %u][MAC: %s][edge: IPv6:%u][last seen: %u sec ago]",
-		   ++num, macaddr_str(buf, list->mac_addr), list->sock.port,
-		   now-list->last_seen);
-    }
-  }
-
-  traceEvent(TRACE_NORMAL, "====================================");
-}
-#endif
-
-/* *************************************************** */
-
 static int keep_running;
 
-#if defined(__linux__) || defined(WIN32)
-#ifdef WIN32
-BOOL WINAPI term_handler(DWORD sig)
-#else
-static void term_handler(int sig)
-#endif
-{
-  static int called = 0;
-
-  if(called) {
-    traceEvent(TRACE_NORMAL, "Ok I am leaving now");
-    _exit(0);
-  } else {
-    traceEvent(TRACE_NORMAL, "Shutting down...");
-    called = 1;
+static void sigproc(int sig) {
+  switch(sig) {
+  case SIGINT:
+  case SIGTERM:
+    traceEvent(TRACE_NORMAL, "Signal received: shutting down");
+    keep_running = 0;
+    break;
+  case SIGHUP:
+    traceEvent(TRACE_NORMAL, "SIGHUP received: ignoring (no reload implemented)");
+    break;
+  default:
+    break;
   }
-
-  keep_running = 0;
-#ifdef WIN32
-  return(TRUE);
-#endif
 }
-#endif /* defined(__linux__) || defined(WIN32) */
 
 /* *************************************************** */
 
-/** Main program entry point from kernel. */
 int main(int argc, char * const argv[]) {
-  int rc;
+  n2n_sn_t sss;
+  int rc = 0;
+
+  /* INITIALIZE FIRST - this sets defaults and zeros the structure */
+  rc = sn_init(&sss);
+  if(rc != 0) {
+    traceEvent(TRACE_ERROR, "Failed to initialize supernode");
+    exit(1);
+  }
+
+  /* THEN parse command line arguments to override defaults */
+  if(argc > 1) {
+    if(argv[1][0] != '-') {
+      /* Config file has been supplied */
+      rc = loadFromFile(argv[1], &sss);
+      if(rc != 0) {
+        traceEvent(TRACE_ERROR, "Failed to load config file %s", argv[1]);
+        exit(1);
+      }
+    } else {
+      /* Load from command line */
+      rc = loadFromCLI(argc, argv, &sss);
+      if(rc != 0) {
+        traceEvent(TRACE_ERROR, "Failed to load command line options");
+        exit(1);
+      }
+    }
+  }
+
+  /* Load initial rate limit configuration */
+  if (strlen(sss.rate_limit_config_path) > 0) {
+    parse_rate_limit_config(&sss);
+  }
+
 #ifndef WIN32
-  struct passwd *pw = NULL;
+  struct sigaction sa;
+
+  /* Setup signal handlers */
+  memset(&sa, 0, sizeof(sa));
+  sa.sa_handler = sigproc;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_flags = SA_RESTART;
+
+  if(sigaction(SIGINT, &sa, NULL) == -1) {
+    traceEvent(TRACE_ERROR, "Failed to set SIGINT handler");
+    exit(1);
+  }
+
+  if(sigaction(SIGTERM, &sa, NULL) == -1) {
+    traceEvent(TRACE_ERROR, "Failed to set SIGTERM handler");
+    exit(1);
+  }
+
+  /* Ignore SIGPIPE */
+  signal(SIGPIPE, SIG_IGN);
 #endif
 
-	sn_init(&sss_node);
-
-  if((argc >= 2) && (argv[1][0] != '-')) {
-    rc = loadFromFile(argv[1], &sss_node);
-    if(argc > 2)
-      rc = loadFromCLI(argc, argv, &sss_node);
-  } else if(argc > 1)
-    rc = loadFromCLI(argc, argv, &sss_node);
-  else
-#ifdef WIN32
-    /* Load from current directory */
-    rc = loadFromFile("supernode.conf", &sss_node);
-#else
-    rc = -1;
-#endif
-
-  if(rc < 0)
+  if (sss.lport == 0) {
+    traceEvent(TRACE_ERROR, "Error: Listen port is required (-l <port>)");
     help();
-
-#if defined(N2N_HAVE_DAEMON)
-  if(sss_node.daemon) {
-    setUseSyslog(1); /* traceEvent output now goes to syslog. */
-
-    if(-1 == daemon(0, 0)) {
-      traceEvent(TRACE_ERROR, "Failed to become daemon.");
-      exit(-5);
-    }
-  }
-#endif /* #if defined(N2N_HAVE_DAEMON) */
-
-  traceEvent(TRACE_DEBUG, "traceLevel is %d", getTraceLevel());
-
-  sss_node.sock = open_socket(sss_node.lport, 1 /*bind ANY*/);
-  if(-1 == sss_node.sock) {
-    traceEvent(TRACE_ERROR, "Failed to open main socket. %s", strerror(errno));
-    exit(-2);
-  } else {
-    traceEvent(TRACE_NORMAL, "supernode is listening on UDP %u (main)", sss_node.lport);
   }
 
-  sss_node.mgmt_sock = open_socket(sss_node.mport, 0 /* bind LOOPBACK */);
-  if(-1 == sss_node.mgmt_sock) {
-    traceEvent(TRACE_ERROR, "Failed to open management socket. %s", strerror(errno));
-    exit(-2);
-  } else
-    traceEvent(TRACE_NORMAL, "supernode is listening on UDP %u (management)", sss_node.mport);
-
+  if(sss.daemon) {
 #ifndef WIN32
-  if (((pw = getpwnam ("n2n")) != NULL) || ((pw = getpwnam ("nobody")) != NULL)) {
-    sss_node.userid = sss_node.userid == 0 ? pw->pw_uid : 0;
-    sss_node.groupid = sss_node.groupid == 0 ? pw->pw_gid : 0;
-  }
-  if((sss_node.userid != 0) || (sss_node.groupid != 0)) {
-    traceEvent(TRACE_NORMAL, "Dropping privileges to uid=%d, gid=%d",
-                              (signed int)sss_node.userid, (signed int)sss_node.groupid);
+    int pid;
 
-    /* Finished with the need for root privileges. Drop to unprivileged user. */
-    if((setgid(sss_node.groupid) != 0)
-       || (setuid(sss_node.userid) != 0)) {
-      traceEvent(TRACE_ERROR, "Unable to drop privileges [%u/%s]", errno, strerror(errno));
-      exit(1);
+    if((pid = fork()) != 0) {
+      if(pid == -1) {
+        traceEvent(TRACE_ERROR, "Failed to fork daemon process");
+        exit(1);
+      } else {
+        traceEvent(TRACE_NORMAL, "Parent process exiting (daemon started in background with pid %d)", pid);
+        exit(0);
+      }
     }
+
+    setsid();
+    chdir("/");
+    umask(0);
+
+    /* Redirect standard files to /dev/null */
+    freopen( "/dev/null", "r", stdin);
+    freopen( "/dev/null", "w", stdout);
+    freopen( "/dev/null", "w", stderr);
+#endif
   }
 
-  if((getuid() == 0) || (getgid() == 0))
-    traceEvent(TRACE_WARNING, "Running as root is discouraged, check out the -u/-g options");
-#endif
+  /* *** Open UDP socket *** */
+  sss.sock = open_socket(sss.lport, 1 /* bind_any */);
+  if(-1 == sss.sock) {
+    traceEvent(TRACE_ERROR, "Failed to open main socket on port %d", sss.lport);
+    exit(-2);
+  }
 
-  traceEvent(TRACE_NORMAL, "supernode started");
-
-#ifdef __linux__
-  signal(SIGTERM, term_handler);
-  signal(SIGINT, term_handler);
-  signal(SIGHUP, dump_registrations);
-#endif
-#ifdef WIN32
-  SetConsoleCtrlHandler(term_handler, TRUE);
-#endif
+  sss.mgmt_sock = open_socket(sss.mport, 0);
+  if(-1 == sss.mgmt_sock) {
+    traceEvent(TRACE_ERROR, "Failed to open management socket on port %d", sss.mport);
+    exit(-2);
+  }
 
   keep_running = 1;
-  return run_sn_loop(&sss_node, &keep_running);
+  run_sn_loop(&sss, &keep_running);
+
+  return(0);
 }
-
-

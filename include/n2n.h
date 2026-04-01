@@ -390,6 +390,15 @@ typedef struct n2n_sn {
 #endif
 	int lock_communities;      /* If true, only loaded communities can be used. */
 	struct sn_community *communities;
+    /* NEW: Traffic statistics and rate limiting fields */
+    struct community_traffic_stats *community_stats;
+    int num_communities;
+    int max_communities;
+    struct rate_limit_rule *rate_limit_rules;
+    char rate_limit_config_path[256];
+    time_t config_last_modified;
+    time_t last_stats_update;
+    uint8_t traffic_stats_enabled;  /* 0=disabled (default), 1=enabled */
 } n2n_sn_t;
 
 /* ************************************** */
@@ -483,6 +492,7 @@ void edge_set_userdata(n2n_edge_t *eee, void *user_data);
 void* edge_get_userdata(n2n_edge_t *eee);
 void edge_send_packet2net(n2n_edge_t *eee, uint8_t *tap_pkt, size_t len);
 void edge_read_from_tap(n2n_edge_t *eee);
+void parse_rate_limit_config(n2n_sn_t *sss);
 int edge_get_n2n_socket(n2n_edge_t *eee);
 int edge_get_management_socket(n2n_edge_t *eee);
 int run_edge_loop(n2n_edge_t *eee, int *keep_running);

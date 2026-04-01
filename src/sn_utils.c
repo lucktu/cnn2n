@@ -17,8 +17,37 @@
  */
 
 #include "n2n.h"
+#include "sys/stat.h"
 
 #define HASH_FIND_COMMUNITY(head, name, out) HASH_FIND_STR(head, name, out)
+#define RATE_LIMIT_ADJUSTMENT_FACTOR 1.05
+
+/* Community traffic statistics structure */
+struct community_traffic_stats {
+    uint64_t tokens;                /* Current token count (bytes) */
+    time_t last_token_refill;       /* Last token refill time */
+    uint64_t instant_bps;           /* Instant traffic (bytes/sec) - 5 second average */
+    uint64_t total_bytes;           /* Total traffic */
+    uint64_t last_24h_bytes;        /* 24-hour traffic */
+    uint64_t current_minute_bytes;  /* Current minute accumulator */
+    uint64_t bytes_history[1440];   /* 24-hour history (1-minute buckets) */
+    time_t base_timestamp;          /* Base timestamp for calculating bucket validity */
+    time_t stats_start_time;        /* Statistics start time */
+    uint64_t recent_seconds[5];     /* Last 5 seconds bytes for calculating average rate */
+    n2n_community_t community_name; /* Community name identifier */
+    int history_idx;                /* Current history index */
+    int recent_seconds_idx;         /* Current second index */
+    time_t last_second_update;      /* Last second update time */
+    time_t last_minute_update;      /* Last minute update time */
+};
+
+/* Rate limiting rule structure */
+struct rate_limit_rule {
+    n2n_community_t community_name;  /* Community name, "*" for all */
+    uint64_t max_24h_bytes;          /* Maximum 24-hour traffic */
+    uint64_t rate_limit_bps;         /* Rate limit (bytes/sec), 0 = unlimited */
+    struct rate_limit_rule *next;    /* Linked list pointer */
+};
 
 /* Check if the address is a private IP */
 static int is_private_ip(const n2n_sock_t *sock) {
@@ -88,7 +117,472 @@ static int process_udp(n2n_sn_t *sss,
                        size_t udp_size,
                        time_t now);
 
+/* Recalculate 24-hour traffic from existing bucket data */
+static void recalculate_24h_traffic(struct community_traffic_stats *stats, time_t now) {
+    uint64_t total = 0;
+    int i;
+
+    traceEvent(TRACE_INFO, "Recalculating 24h traffic due to time anomaly");
+
+    /* Sum all historical buckets */
+    for (i = 0; i < 1440; i++) {
+        total += stats->bytes_history[i];
+    }
+
+    /* Add current minute traffic */
+    total += stats->current_minute_bytes;
+
+    /* Update 24-hour total */
+    stats->last_24h_bytes = total;
+
+    /* Reset timing to current time */
+    stats->last_minute_update = now;
+    stats->history_idx = 0;
+    stats->base_timestamp = now;
+
+    traceEvent(TRACE_INFO, "24h traffic recalculated: %.2f GB",
+               total / (1024.0 * 1024.0 * 1024.0));
+}
+
+/* Generate statistics file path based on config file path */
+static void generate_stats_path(n2n_sn_t *sss, char *path, size_t path_size) {
+    strncpy(path, sss->rate_limit_config_path, path_size - 1);
+    path[path_size - 1] = '\0';
+
+    char *last_slash = strrchr(path, '/');
+    if (last_slash) {
+        char *dot = strrchr(last_slash + 1, '.');
+        if (dot) {
+            /* Remove existing extension and add .dat */
+            strcpy(dot, ".dat");
+        } else {
+            /* No extension, just add .dat */
+            strcat(last_slash + 1, ".dat");
+        }
+    } else {
+        /* No path, just filename */
+        char *dot = strrchr(path, '.');
+        if (dot) {
+            strcpy(dot, ".dat");
+        } else {
+            strcat(path, ".dat");
+        }
+    }
+}
+
+/* Save traffic statistics to binary format in config directory */
+static void save_traffic_stats_periodic(n2n_sn_t *sss) {
+    if (!sss->community_stats || sss->num_communities == 0) return;
+
+    char save_path[512];
+    generate_stats_path(sss, save_path, sizeof(save_path));
+
+    FILE *fp = fopen(save_path, "wb");
+    if (fp) {
+        fwrite(sss->community_stats, sizeof(struct community_traffic_stats),
+               sss->num_communities, fp);
+        fclose(fp);
+        traceEvent(TRACE_NORMAL, "Traffic statistics saved to: %s", save_path);
+    } else {
+        traceEvent(TRACE_ERROR, "Failed to save traffic statistics to: %s", save_path);
+    }
+}
+
+/* Check if it's time to save statistics periodically */
+static void check_periodic_save(n2n_sn_t *sss, time_t now) {
+    /* Save every 5 minutes (300 seconds) */
+    static time_t last_periodic_save = 0;
+
+    if (now - last_periodic_save >= 300) {
+        save_traffic_stats_periodic(sss);
+        last_periodic_save = now;
+    }
+}
+
+/* Check if MAC address is valid */
+static int is_valid_mac(const n2n_mac_t mac) {
+    /* MAC address validation */
+    int is_valid_mac = 1;
+
+    /* Check for zero MAC */
+    if (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 &&
+        mac[3] == 0 && mac[4] == 0 && mac[5] == 0) {
+        is_valid_mac = 0;
+    }
+
+    /* Check for broadcast MAC */
+    if (mac[0] == 0xFF && mac[1] == 0xFF && mac[2] == 0xFF &&
+        mac[3] == 0xFF && mac[4] == 0xFF && mac[5] == 0xFF) {
+        is_valid_mac = 0;
+    }
+
+    /* Check for locally administered MAC (00:01:00:xx:xx:xx pattern) */
+    if (mac[0] == 0x00 && mac[1] == 0x01 && mac[2] == 0x00) {
+        is_valid_mac = 0;
+    }
+
+    return is_valid_mac; /* 1 = valid, 0 = invalid */
+}
+
+/* Find or create community statistics */
+static struct community_traffic_stats* get_community_stats(n2n_sn_t *sss,
+                                                          const n2n_community_t community) {
+    int i;
+
+    /* Search existing stats */
+    for (i = 0; i < sss->num_communities; i++) {
+        if (memcmp(sss->community_stats[i].community_name, community,
+                   sizeof(n2n_community_t)) == 0) {
+            return &sss->community_stats[i];
+        }
+    }
+
+    /* Create new stats entry */
+    if (sss->num_communities >= sss->max_communities) {
+        sss->max_communities = sss->max_communities ? sss->max_communities * 2 : 16;
+        struct community_traffic_stats *new_stats = realloc(sss->community_stats,
+                                          sss->max_communities * sizeof(struct community_traffic_stats));
+        if (!new_stats) return NULL;
+        sss->community_stats = new_stats;
+    }
+
+    int loaded_from_file = 0;
+    char load_path[512];
+    generate_stats_path(sss, load_path, sizeof(load_path));
+
+    FILE *fp = fopen(load_path, "rb");
+    if (fp) {
+        struct community_traffic_stats temp_stats;
+        while (fread(&temp_stats, sizeof(struct community_traffic_stats), 1, fp) == 1) {
+            if (memcmp(temp_stats.community_name, community, sizeof(n2n_community_t)) == 0) {
+                memcpy(&sss->community_stats[sss->num_communities], &temp_stats,
+                       sizeof(struct community_traffic_stats));
+
+                /* Time consistency check */
+                time_t now = time(NULL);
+                if (temp_stats.last_minute_update > now ||
+                    temp_stats.last_minute_update < now - 86400) {
+                    /* Time anomaly detected, recalculate 24h traffic */
+                    recalculate_24h_traffic(&sss->community_stats[sss->num_communities], now);
+                }
+                /* Update base timestamp to current time */
+                sss->community_stats[sss->num_communities].base_timestamp = now;
+
+                loaded_from_file = 1;
+                break;
+            }
+        }
+        fclose(fp);
+    }
+
+    if (!loaded_from_file) {
+        memset(&sss->community_stats[sss->num_communities], 0,
+               sizeof(struct community_traffic_stats));
+        memcpy(sss->community_stats[sss->num_communities].community_name,
+               community, sizeof(n2n_community_t));
+
+    /* Initialize new fields */
+    sss->community_stats[sss->num_communities].last_second_update = 0;
+    sss->community_stats[sss->num_communities].last_minute_update = 0;
+    sss->community_stats[sss->num_communities].recent_seconds_idx = 0;
+    sss->community_stats[sss->num_communities].stats_start_time = time(NULL);
+    /* Initialize token bucket fields */
+    sss->community_stats[sss->num_communities].last_token_refill = 0;
+    sss->community_stats[sss->num_communities].tokens = 0;
+
+    }
+
+    return &sss->community_stats[sss->num_communities++];
+}
+
+/* Record traffic for a community */
+static void record_traffic(n2n_sn_t *sss, const n2n_community_t community,
+                          uint64_t bytes, time_t now) {
+    if (!sss->traffic_stats_enabled) return;  /* Check if traffic stats are enabled */
+    struct community_traffic_stats *stats = get_community_stats(sss, community);
+    if (!stats) return;  /* Exit if stats structure not found */
+
+    /* Update cumulative traffic counters */
+    stats->total_bytes += bytes;           /* Total traffic since start */
+    stats->current_minute_bytes += bytes;  /* Traffic in current minute */
+
+    /* Update last stats update time for periodic save */
+    sss->last_stats_update = now;
+
+    /* Initialize second-level tracking on first call */
+    if (stats->last_second_update == 0) {
+        stats->last_second_update = now;   /* Initialize second-level timestamp */
+        stats->last_minute_update = now;   /* Initialize minute-level timestamp */
+        stats->recent_seconds_idx = 0;     /* Reset recent seconds index */
+        memset(stats->recent_seconds, 0, sizeof(stats->recent_seconds));  /* Clear recent seconds array */
+    }
+
+    /* Handle second-level updates - for 5-second average rate calculation */
+    if (now > stats->last_second_update) {
+        int seconds_diff = now - stats->last_second_update;
+
+        /* Handle skipped seconds due to time jumps or delays */
+        if (seconds_diff >= 5) {
+            /* Skip more than 5 seconds, reset array to avoid stale data */
+            memset(stats->recent_seconds, 0, sizeof(stats->recent_seconds));
+            stats->recent_seconds_idx = 0;
+        } else {
+            /* Advance second by second for accurate tracking */
+            while (seconds_diff > 0) {
+                stats->recent_seconds_idx = (stats->recent_seconds_idx + 1) % 5;
+                stats->recent_seconds[stats->recent_seconds_idx] = 0;
+                seconds_diff--;
+            }
+        }
+        stats->last_second_update = now;  /* Update second-level timestamp */
+    }
+
+    /* Accumulate current second bytes for rate calculation */
+    stats->recent_seconds[stats->recent_seconds_idx] += bytes;
+
+    /* Calculate 5-second average instant rate for display purposes only */
+    uint64_t recent_total = 0;
+    int i;
+    for (i = 0; i < 5; i++) {
+        recent_total += stats->recent_seconds[i];
+    }
+    stats->instant_bps = recent_total / 5;  /* 5-second average bytes per second */
+
+    /* Detect time jump before normal update */
+    if (stats->last_minute_update > 0 && (now - stats->last_minute_update < 0 || now - stats->last_minute_update > 3600)) {
+        traceEvent(TRACE_WARNING, "Time jump detected: last=%lu, now=%lu, diff=%ld",
+                   stats->last_minute_update, now, now - stats->last_minute_update);
+        recalculate_24h_traffic(stats, now);
+    }
+
+    /* Update 24-hour traffic history every minute */
+    if (now - stats->last_minute_update >= 60) {
+        int minutes_diff = (now - stats->last_minute_update) / 60;
+
+        /* Limit maximum skipped minutes to prevent excessive processing */
+        if (minutes_diff > 1440) minutes_diff = 1440;
+
+        /* Handle skipped minutes due to time jumps or delays */
+        for (i = 0; i < minutes_diff; i++) {
+            stats->history_idx = (stats->history_idx + 1) % 1440;  /* Advance to next bucket */
+
+            /* Remove expired data from 24-hour total (prevent underflow) */
+            if (stats->last_24h_bytes >= stats->bytes_history[stats->history_idx]) {
+                stats->last_24h_bytes -= stats->bytes_history[stats->history_idx];
+            } else {
+                stats->last_24h_bytes = 0;  /* Reset if underflow detected */
+            }
+        }
+
+        /* Record current minute data and update base timestamp */
+        stats->bytes_history[stats->history_idx] = stats->current_minute_bytes;
+        stats->base_timestamp = now;  /* Update base timestamp for expired data detection */
+        stats->last_24h_bytes += stats->current_minute_bytes;  /* Add current minute to 24h total */
+
+        /* Reset minute counter and update time to next minute boundary */
+        stats->current_minute_bytes = 0;
+        stats->last_minute_update += minutes_diff * 60;
+    }
+    check_periodic_save(sss, now);  /* Check if periodic save is needed */
+}
+
+/* Create default configuration file with examples */
+static int create_default_config(const char *config_path) {
+    FILE *fp = fopen(config_path, "w");
+    if (!fp) {
+        traceEvent(TRACE_ERROR, "Failed to create default config file: %s", config_path);
+        return -1;
+    }
+
+    fprintf(fp, "# N2N Supernode Rate Limit Configuration File\n");
+    fprintf(fp, "# Format: <community_name> <rate_limit_KB/s> <max_24h_traffic_GB>\n");
+    fprintf(fp, "#\n");
+    fprintf(fp, "# community_name    : Name of the community (use * or 0 for all communities)\n");
+    fprintf(fp, "# rate_limit_KB/s   : Speed limit applied AFTER 24h traffic exceeded (0 = unlimited)\n");
+    fprintf(fp, "# max_24h_traffic_GB: Maximum traffic allowed in 24 hours (0 = unlimited)\n");
+    fprintf(fp, "#\n");
+    fprintf(fp, "# IMPORTANT: Speed limiting only activates when 24h traffic limit is exceeded\n");
+    fprintf(fp, "# Rules are processed from top to bottom - later rules have higher priority\n");
+    fprintf(fp, "# File changes are automatically detected and applied without restart\n");
+    fprintf(fp, "#\n");
+    fprintf(fp, "# --------------------------------------------------------------------------- #\n");
+    fprintf(fp, "#\n");
+    fprintf(fp, "# Traffic statistics and rate limiting global switch: (default: off)\n");
+    fprintf(fp, "#enabled on\n");
+    fprintf(fp, "\n");
+    fprintf(fp, "# Practical application examples:\n");
+    fprintf(fp, "#community_name    rate_limit_KB/s  max_24h_traffic_GB  remark\n");
+    fprintf(fp, "#*                 10               50                  Global limit: 50GB/24h, then throttle to 10KB/s\n");
+    fprintf(fp, "#n2n               5                20                  Limit \"n2n\" to 20GB/24h, then throttle to 5KB/s\n");
+    fprintf(fp, "#unlimited_group   0                0                   Unlimited traffic for specific community\n");
+    fprintf(fp, "#traffic_limited   0                15                  Traffic limit only (no speed limit after exceed)\n");
+    fprintf(fp, "#speed_limited     3.0              0                   Speed limit only (activates immediately)\n");
+
+    fclose(fp);
+    traceEvent(TRACE_NORMAL, "Created default configuration file: %s", config_path);
+    return 0;
+}
+
+/* Parse rate limit configuration file */
+void parse_rate_limit_config(n2n_sn_t *sss) {
+    FILE *fp;
+    char line[512];
+    char community[32];
+    double max_24h_gb, rate_limit_kbps;
+
+    /* Check if file exists and is empty */
+    struct stat file_stat;
+    if (stat(sss->rate_limit_config_path, &file_stat) == 0) {
+        if (file_stat.st_size == 0) {
+            /* File is empty, create default configuration */
+            create_default_config(sss->rate_limit_config_path);
+        }
+    } else {
+        /* File doesn't exist, create default configuration */
+        create_default_config(sss->rate_limit_config_path);
+    }
+
+    /* Free existing rules */
+    while (sss->rate_limit_rules) {
+        struct rate_limit_rule *rule = sss->rate_limit_rules;
+        sss->rate_limit_rules = rule->next;
+        free(rule);
+    }
+
+    sss->traffic_stats_enabled = 0; /* Reset to disabled on each reload */
+    fp = fopen(sss->rate_limit_config_path, "r");
+    if (!fp) return;
+
+    /* Build rule list using tail insertion to maintain file order priority */
+    struct rate_limit_rule *last_rule = NULL;
+
+    while (fgets(line, sizeof(line), fp)) {
+        /* Skip comments and empty lines */
+        if (line[0] == '#' || line[0] == '\n') continue;
+
+        char keyword[32], value[32];
+        if (sscanf(line, "%31s %31s", keyword, value) == 2) {
+            if (strcmp(keyword, "enabled") == 0) {
+                sss->traffic_stats_enabled = (strcmp(value, "on") == 0) ? 1 : 0;
+                traceEvent(TRACE_NORMAL, "Traffic stats/rate-limit: %s",
+                           sss->traffic_stats_enabled ? "enabled" : "disabled");
+                continue;
+            }
+        }
+
+        if (sscanf(line, "%31s %lf %lf", community, &rate_limit_kbps, &max_24h_gb) == 3) {
+            struct rate_limit_rule *rule = malloc(sizeof(struct rate_limit_rule));
+            if (!rule) continue;
+
+            if (strcmp(community, "*") == 0 || strcmp(community, "0") == 0) {
+                memset(rule->community_name, 0, sizeof(rule->community_name));
+            } else {
+                strncpy((char*)rule->community_name, community, sizeof(rule->community_name) - 1);
+            }
+
+            rule->rate_limit_bps = (uint64_t)(rate_limit_kbps * 1024);
+            rule->max_24h_bytes = (uint64_t)(max_24h_gb * 1024 * 1024 * 1024);
+            rule->next = NULL;
+
+            /* Tail insertion to maintain file order (later rules have higher priority) */
+            if (!sss->rate_limit_rules) {
+                sss->rate_limit_rules = rule;
+                last_rule = rule;
+            } else {
+                last_rule->next = rule;
+                last_rule = rule;
+            }
+        }
+    }
+
+    fclose(fp);
+}
+
+/* Check rate limit for a community using token bucket algorithm */
+static int check_rate_limit(n2n_sn_t *sss, const n2n_community_t community,
+                           uint64_t packet_size, time_t now) {
+    struct rate_limit_rule *rule;
+    struct community_traffic_stats *stats;
+    static time_t last_config_check = 0;
+
+    /* Reload config if changed (max once per 60 seconds for performance) */
+    if (now - last_config_check >= 60) {
+        struct stat file_stat;
+        if (stat(sss->rate_limit_config_path, &file_stat) == 0) {
+            if (file_stat.st_mtime > sss->config_last_modified) {
+                parse_rate_limit_config(sss);
+                sss->config_last_modified = file_stat.st_mtime;
+            }
+        }
+        last_config_check = now;
+    }
+
+    /* Find matching rule - reverse order for priority (last match wins) */
+    struct rate_limit_rule *last_match = NULL;
+    rule = sss->rate_limit_rules;
+    while (rule) {
+        if (rule->community_name[0] == '\0' ||
+            memcmp(rule->community_name, community, sizeof(n2n_community_t)) == 0) {
+            last_match = rule; /* Keep track of last matching rule */
+        }
+        rule = rule->next;
+    }
+    rule = last_match;
+
+    if (!rule) return 1; /* No limit */
+
+    stats = get_community_stats(sss, community);
+    if (!stats) return 1;
+
+    /* Calculate total 24h traffic including current minute */
+    uint64_t total_24h_traffic = stats->last_24h_bytes + stats->current_minute_bytes;
+
+    /* Hard blocking when rate_limit_bps = 0 and 24h limit exceeded */
+    if (rule->rate_limit_bps == 0 && rule->max_24h_bytes > 0) {
+        if (total_24h_traffic > rule->max_24h_bytes) {
+            /* 24h traffic exceeds limit - block */
+            traceEvent(TRACE_DEBUG, "Community %s: 24h limit exceeded (%.2f GB > %.2f GB), blocking",
+                       community,
+                       total_24h_traffic / (1024.0 * 1024.0 * 1024.0),
+                       rule->max_24h_bytes / (1024.0 * 1024.0 * 1024.0));
+            return 0; /* Blocked */
+        }
+        /* If we reach here, 24h traffic is below limit - allow */
+    }
+
+    /* Token bucket rate limiting - activate when max_24h_bytes is 0 (limit reached)
+       OR when 24h traffic exceeds the configured limit */
+    if (rule->rate_limit_bps > 0 &&
+        (rule->max_24h_bytes == 0 || total_24h_traffic > rule->max_24h_bytes)) {
+        /* Initialize token bucket */
+        if (stats->last_token_refill == 0) {
+            stats->last_token_refill = now;
+            stats->tokens = rule->rate_limit_bps * RATE_LIMIT_ADJUSTMENT_FACTOR;
+        }
+
+        /* Refill tokens based on elapsed time */
+        if (now > stats->last_token_refill) {
+            uint64_t elapsed = (uint64_t)(now - stats->last_token_refill);
+            stats->tokens += elapsed * rule->rate_limit_bps * RATE_LIMIT_ADJUSTMENT_FACTOR;
+            uint64_t max_tokens = rule->rate_limit_bps * 5 * RATE_LIMIT_ADJUSTMENT_FACTOR;
+            if (stats->tokens > max_tokens)
+                stats->tokens = max_tokens;
+            stats->last_token_refill = now;
+        }
+
+        /* Check if enough tokens available */
+        if (stats->tokens < packet_size)
+            return 0; /* Blocked */
+
+        /* Consume tokens */
+        stats->tokens -= packet_size;
+    }
+
+    return 1; /* Allowed */
+}
+
 /* ************************************** */
+
 
 static int try_forward(n2n_sn_t * sss,
 		       const struct sn_community *comm,
@@ -100,39 +594,48 @@ static int try_forward(n2n_sn_t * sss,
   struct peer_info *  scan;
   macstr_t            mac_buf;
   n2n_sock_str_t      sockbuf;
+  time_t now = time(NULL); /* Get time once for consistency */
 
   HASH_FIND_PEER(comm->edges, dstMac, scan);
 
   if(NULL != scan)
-    {
-      int data_sent_len;
-      data_sent_len = sendto_sock(sss, &(scan->sock), pktbuf, pktsize);
-
-      if(data_sent_len == pktsize)
-        {
-	  ++(sss->stats.fwd);
-	  traceEvent(TRACE_DEBUG, "unicast %lu to [%s] %s",
-		     pktsize,
-		     sock_to_cstr(sockbuf, &(scan->sock)),
-		     macaddr_str(mac_buf, scan->mac_addr));
-        }
-      else
-        {
-	  ++(sss->stats.errors);
-	  traceEvent(TRACE_ERROR, "unicast %lu to [%s] %s FAILED (%d: %s)",
-		     pktsize,
-		     sock_to_cstr(sockbuf, &(scan->sock)),
-		     macaddr_str(mac_buf, scan->mac_addr),
-		     errno, strerror(errno));
-        }
+  {
+    /* Check rate limit before sending */
+    if (!check_rate_limit(sss, cmn->community, pktsize, now)) {
+        traceEvent(TRACE_DEBUG, "Rate limit exceeded for community");
+        return 0;
     }
+
+    int data_sent_len;
+    data_sent_len = sendto_sock(sss, &(scan->sock), pktbuf, pktsize);
+
+    if(data_sent_len == pktsize)
+    {
+      ++(sss->stats.fwd);
+      /* Record traffic */
+      record_traffic(sss, cmn->community, pktsize, now);
+      traceEvent(TRACE_DEBUG, "unicast %lu to [%s] %s",
+		 pktsize,
+		 sock_to_cstr(sockbuf, &(scan->sock)),
+		 macaddr_str(mac_buf, scan->mac_addr));
+    }
+    else
+    {
+      ++(sss->stats.errors);
+      traceEvent(TRACE_ERROR, "unicast %lu to [%s] %s FAILED (%d: %s)",
+		 pktsize,
+		 sock_to_cstr(sockbuf, &(scan->sock)),
+		 macaddr_str(mac_buf, scan->mac_addr),
+		 errno, strerror(errno));
+    }
+  }
   else
-    {
-      traceEvent(TRACE_DEBUG, "try_forward unknown MAC");
+  {
+    traceEvent(TRACE_DEBUG, "try_forward unknown MAC");
 
-      /* Not a known MAC so drop. */
-      return(-2);
-    }
+    /* Not a known MAC so drop. */
+    return(-2);
+  }
 
   return(0);
 }
@@ -178,16 +681,34 @@ static ssize_t sendto_sock(n2n_sn_t *sss,
  */
 static int try_broadcast(n2n_sn_t * sss,
                          const struct sn_community *comm,
-			 const n2n_common_t * cmn,
-			 const n2n_mac_t srcMac,
-			 const uint8_t * pktbuf,
-			 size_t pktsize)
+                         const n2n_common_t * cmn,
+                         const n2n_mac_t srcMac,
+                         const uint8_t * pktbuf,
+                         size_t pktsize)
 {
   struct peer_info *scan, *tmp;
   macstr_t            mac_buf;
   n2n_sock_str_t      sockbuf;
+  int successful_sends = 0;
+  time_t now = time(NULL); /* Get time once for consistency */
 
   traceEvent(TRACE_DEBUG, "try_broadcast");
+
+  /* Count potential destinations (excluding source) */
+  int dest_count = 0;
+  HASH_ITER(hh, comm->edges, scan, tmp) {
+    if(memcmp(srcMac, scan->mac_addr, sizeof(n2n_mac_t)) != 0) {
+      dest_count++;
+    }
+  }
+
+  /* Check rate limit with total expected traffic */
+  if (dest_count > 0) {
+    if (!check_rate_limit(sss, cmn->community, pktsize * dest_count, now)) {
+        traceEvent(TRACE_DEBUG, "Rate limit exceeded for broadcast");
+        return 0;
+    }
+  }
 
   HASH_ITER(hh, comm->edges, scan, tmp) {
     if(memcmp(srcMac, scan->mac_addr, sizeof(n2n_mac_t)) != 0) {
@@ -208,6 +729,7 @@ static int try_broadcast(n2n_sn_t * sss,
       else
       {
         ++(sss->stats.broadcast);
+        successful_sends++;
         traceEvent(TRACE_DEBUG, "multicast %lu to [%s] %s",
 	           pktsize,
 		   sock_to_cstr(sockbuf, &(scan->sock)),
@@ -215,9 +737,14 @@ static int try_broadcast(n2n_sn_t * sss,
       }
     }
   }
+
+  /* Record traffic ONCE per broadcast packet */
+  if (successful_sends > 0) {
+      record_traffic(sss, cmn->community, pktsize * successful_sends, now);
+  }
+
   return 0;
 }
-
 
 /** Initialise the supernode structure */
 int sn_init(n2n_sn_t *sss) {
@@ -237,6 +764,16 @@ int sn_init(n2n_sn_t *sss) {
 	sss->auto_ip_addr.net_addr = inet_addr(N2N_SN_AUTO_IP_NET_ADDR_DEFAULT);
 	sss->auto_ip_addr.net_addr = ntohl(sss->auto_ip_addr.net_addr);
 	sss->auto_ip_addr.net_bitlen = N2N_SN_AUTO_IP_NET_BIT_DEFAULT;
+
+    /* Initialize traffic statistics */
+    sss->community_stats = NULL;
+    sss->num_communities = 0;
+    sss->max_communities = 0;
+    sss->rate_limit_rules = NULL;
+    strcpy(sss->rate_limit_config_path, "rate_limit.conf");
+    sss->config_last_modified = 0;
+    sss->last_stats_update = 0;
+    sss->traffic_stats_enabled = 0;  /* Disabled by default */
 
     n2n_srand (n2n_seed()); /* https://github.com/ntop/n2n/pull/373/files */
 
@@ -270,6 +807,26 @@ void sn_term(n2n_sn_t *sss)
         free(community);
     }
 
+    /* Clean up community statistics */
+    if (sss->community_stats) {
+        char save_path[512];
+        generate_stats_path(sss, save_path, sizeof(save_path));
+
+        FILE *fp = fopen(save_path, "wb");
+        if (fp) {
+            fwrite(sss->community_stats, sizeof(struct community_traffic_stats),
+                   sss->num_communities, fp);
+            fclose(fp);
+        }
+    }
+
+    /* Clean up rate limit rules */
+    while (sss->rate_limit_rules) {
+        struct rate_limit_rule *rule = sss->rate_limit_rules;
+        sss->rate_limit_rules = rule->next;
+        free(rule);
+    }
+
 #ifdef WIN32
 	destroyWin32();
 #endif
@@ -296,6 +853,12 @@ static int update_edge(n2n_sn_t *sss,
 	macstr_t mac_buf;
 	n2n_sock_str_t sockbuf;
 	struct peer_info *scan;
+
+    /* Validate MAC address first */
+    if (!is_valid_mac(reg->edgeMac)) {
+        traceEvent(TRACE_WARNING, "Rejecting invalid MAC address");
+        return -1; /* Reject invalid MAC */
+    }
 
 	traceEvent(TRACE_DEBUG, "update_edge for %s [%s]",
 	           macaddr_str(mac_buf, reg->edgeMac),
@@ -441,6 +1004,10 @@ static int purge_expired_communities(n2n_sn_t *sss,
     num_reg += purge_peer_list(&comm->edges, now - REGISTRATION_TIMEOUT);
     if ((comm->edges == NULL) && (!sss->lock_communities)) {
       traceEvent(TRACE_INFO, "Purging idle community %s", comm->community);
+
+      /* NOTE: Traffic statistics are preserved even when community is purged
+         to maintain 24-hour traffic counting across reconnections */
+
       if (NULL != comm->header_encryption_ctx)
         /* this should not happen as no 'locked' and thus only communities w/o encrypted header here */
         free(comm->header_encryption_ctx);
@@ -454,7 +1021,6 @@ static int purge_expired_communities(n2n_sn_t *sss,
 
   return 0;
 }
-
 
 static int number_enc_packets_sort (struct sn_community *a, struct sn_community *b) {
   // comparison function for sorting communities in descending order of their
@@ -501,82 +1067,122 @@ static int process_mgmt(n2n_sn_t *sss,
 	n2n_sock_str_t sockbuf;
 	dec_ip_bit_str_t ip_bit_str = {'\0'};
 
+    double total_instant_kbps = 0.0;
+    double total_last_24h_gb = 0.0;
+    double total_gb = 0.0;
+
 	traceEvent(TRACE_DEBUG, "process_mgmt");
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    " id  mac                lan_ip              wan_ip                     lseen\n");
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "---v2------------------------------------------------------------------v2---\n");
+
 	HASH_ITER(hh, sss->communities, community, tmp) {
-		ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-		                    "%s\n", community->community);
+
+		/* Find traffic stats for this community */
+		struct community_traffic_stats *stats = NULL;
+		int j;
+		for (j = 0; j < sss->num_communities; j++) {
+			if (memcmp(sss->community_stats[j].community_name, community->community,
+			           sizeof(n2n_community_t)) == 0) {
+				stats = &sss->community_stats[j];
+				break;
+			}
+		}
+
+		/* Send community name with traffic info */
+		if (stats && sss->traffic_stats_enabled) {
+    		double display_kbps = stats->instant_bps / 1024.0;
+    		double last_24h_gb = stats->last_24h_bytes / (1024.0 * 1024.0 * 1024.0);
+    		double total_gb_for_community = stats->total_bytes / (1024.0 * 1024.0 * 1024.0);
+
+            /* Unified judgment: check if inactive for more than 10 seconds */
+            if (stats->last_second_update > 0 && (now - stats->last_second_update) > 10) {
+                display_kbps = 0.0;  /* Inactive for over 10 seconds */
+            }
+
+            /* Push to totals */
+            total_instant_kbps += display_kbps;
+            total_last_24h_gb += last_24h_gb;
+            total_gb += total_gb_for_community;
+
+            /* Display this community */
+            if (display_kbps == 0.0) {
+                ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                                    "%-37s  %4s %-7.1f  %-7.1f  %-10.1f\n",
+                                    community->community, "    ", 0.0, last_24h_gb, total_gb_for_community);
+            } else {
+                ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                                    "%-37s  %4s %-7.1f  %-7.1f  %-10.1f\n",
+                                    community->community, "--->", display_kbps, last_24h_gb, total_gb_for_community);
+            }
+		} else {
+    		ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize, "%s\n", community->community);
+		}
+
 		sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
 		ressize = 0;
 
 		num = 0;
 		HASH_ITER(hh, community->edges, peer, tmpPeer) {
-  		  /* MAC address validation */
-  		  uint8_t *mac = peer->mac_addr;
-   		 int is_valid_mac = 1;
-
-   		 /* Check for zero MAC */
-   		 if (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 &&
-     		   mac[3] == 0 && mac[4] == 0 && mac[5] == 0) {
-      		  is_valid_mac = 0;
-   		 }
-
-   		 /* Check for broadcast MAC */
-   		 if (mac[0] == 0xFF && mac[1] == 0xFF && mac[2] == 0xFF &&
-     		   mac[3] == 0xFF && mac[4] == 0xFF && mac[5] == 0xFF) {
-       		 is_valid_mac = 0;
-    		}
-
-   		 /* Check for locally administered MAC (00:01:00:xx:xx:xx pattern) */
-   		 if (mac[0] == 0x00 && mac[1] == 0x01 && mac[2] == 0x00) {
-       		 is_valid_mac = 0;
-   		 }
-
-   		 /* Skip invalid MAC addresses */
-   		 if (!is_valid_mac) {
-       		 continue;
-    		}
-
-      displayed_edges++;
-
-    		ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-               		 "\%3u  %-17s  %-18s  %-21s      %1lu\n",
-              		  ++num, macaddr_str(mac_buf, peer->mac_addr),
-               		 ip_subnet_to_str(ip_bit_str, &peer->dev_addr),
-               		 sock_to_cstr(sockbuf, &(peer->sock)), now - peer->last_seen);
+			ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+			                    "\%3u  %-17s  %-18s  %-21s      %1lu\n",
+			                    ++num, macaddr_str(mac_buf, peer->mac_addr),
+			                    ip_subnet_to_str(ip_bit_str, &peer->dev_addr),
+			                    sock_to_cstr(sockbuf, &(peer->sock)), now - peer->last_seen);
 
 			sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
 			ressize = 0;
 		}
+		displayed_edges += num;
 	}
+
+	if (sss->traffic_stats_enabled && sss->num_communities > 0) {
+        struct tm *start_tm = localtime(&sss->community_stats[0].stats_start_time);
+        char start_date[9];
+        strftime(start_date, sizeof(start_date), "%Y%m%d", start_tm);
+
+        if (total_instant_kbps == 0.0) {
+            ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                                "Total (KB/s  GB/24h  GB/From:%s) %4s %-7.1f  %-7.1f  %-10.1f\n",
+                                start_date, "    ", 0.0, total_last_24h_gb, total_gb);
+        } else {
+            ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                                "Total (KB/s  GB/24h  GB/From:%s) %4s %-7.1f  %-7.1f  %-10.1f\n",
+                                start_date, "--->", total_instant_kbps, total_last_24h_gb, total_gb);
+        }
+    	sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
+    	ressize = 0;
+	}
+
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "---v2------------------------------------------------------------------v2---\n");
 
-// Count the number of seconds running time
-    unsigned long uptime = now - sss->start_time;
+	/* Format current date and time */
+	struct tm *tm_info = localtime(&now);
+	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                        "%02d-%02d-%02d %02d:%02d up ",
+                        tm_info->tm_year + 1900, tm_info->tm_mon + 1, tm_info->tm_mday,
+                        tm_info->tm_hour, tm_info->tm_min);
 
-// Converts the number of seconds to days, hours, minutes, and seconds
-    unsigned long days = uptime / (24 * 60 * 60);
-    uptime %= (24 * 60 * 60);
-    unsigned long hours = uptime / (60 * 60);
-//    uptime %= (60 * 60);
-//    unsigned long minutes = uptime / 60;
-//    unsigned long seconds = uptime % 60;
+	/* Count the number of seconds running time */
+	unsigned long uptime = now - sss->start_time;
 
-// Printf format string and appends it to the buffer
- ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-                     "uptime %lud_%luh | ", days, hours);
+	/* Converts the number of seconds to days, hours, minutes, and seconds */
+	unsigned long days = uptime / (24 * 60 * 60);
+	uptime %= (24 * 60 * 60);
+	unsigned long hours = uptime / (60 * 60);
+	uptime %= (60 * 60);
+	unsigned long minutes = uptime / 60;
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "edges %u | ",
-	                    displayed_edges);
+                        "%lud_%luh_%lum | ", days, hours, minutes);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-                        /*"cur_cmnts %u | ", HASH_COUNT(sss->communities));*/
+	                    "edges %u | ", displayed_edges);
+
+	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "cmnts %u | ", HASH_COUNT(sss->communities));
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
@@ -584,12 +1190,8 @@ static int process_mgmt(n2n_sn_t *sss,
 	                    (unsigned int) sss->stats.reg_super_nak);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "errs %u | ",
+	                    "errs %u\n",
 	                    (unsigned int) sss->stats.errors);
-
-	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "last_reg %lus ago\n",
-	                    (long unsigned int) (now - sss->stats.last_reg_super));
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "broadcast %u | ",
@@ -604,8 +1206,9 @@ static int process_mgmt(n2n_sn_t *sss,
 	                    (unsigned int) sss->stats.fwd);
 
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-	                    "last_fwd %lus ago\n\n",
-	                    (long unsigned int) (now - sss->stats.last_fwd));
+                        "last_fwd/_reg %lu/%lus ago\n\n",
+                        (long unsigned int) (now - sss->stats.last_fwd),
+                        (long unsigned int) (now - sss->stats.last_reg_super));
 
 	sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
 
@@ -980,6 +1583,11 @@ static int process_udp(n2n_sn_t * sss,
 		 macaddr_str(mac_buf, reg.edgeMac),
 		 sock_to_cstr(sockbuf, &(ack.sock)));
 
+      if (!is_valid_mac(reg.edgeMac)) {
+          traceEvent(TRACE_DEBUG, "Rejecting REGISTER_SUPER with invalid MAC");
+          break; /* Drop the packet */
+      }
+
       if(memcmp(reg.edgeMac, &null_mac, N2N_MAC_SIZE) != 0){
 	      update_edge(sss, &reg, comm, &(ack.sock), now);
       }
@@ -1171,6 +1779,7 @@ int run_sn_loop(n2n_sn_t *sss, int *keep_running)
 
         purge_expired_communities(sss, &last_purge_edges, now);
 	sort_communities (sss, &last_sort_communities, now);
+	    check_periodic_save(sss, now);
     } /* while */
 
     sn_term(sss);
