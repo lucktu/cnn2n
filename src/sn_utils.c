@@ -170,6 +170,50 @@ static void generate_stats_path(n2n_sn_t *sss, char *path, size_t path_size) {
     }
 }
 
+/* Preload all community statistics from file */
+void preload_all_community_stats(n2n_sn_t *sss) {
+    char load_path[512];
+    FILE *fp;
+    struct community_traffic_stats temp_stats;
+    int found;
+    int i;
+
+    generate_stats_path(sss, load_path, sizeof(load_path));
+
+    fp = fopen(load_path, "rb");
+    if (!fp) return;
+
+    while (fread(&temp_stats, sizeof(struct community_traffic_stats), 1, fp) == 1) {
+        /* Check if this community is already loaded */
+        found = 0;
+        for (i = 0; i < sss->num_communities; i++) {
+            if (memcmp(sss->community_stats[i].community_name, temp_stats.community_name,
+                      sizeof(n2n_community_t)) == 0) {
+                found = 1;
+                break;
+            }
+        }
+
+        if (!found) {
+            /* Add new community stats */
+            if (sss->num_communities >= sss->max_communities) {
+                sss->max_communities = sss->max_communities ? sss->max_communities * 2 : 16;
+                sss->community_stats = realloc(sss->community_stats,
+                    sss->max_communities * sizeof(struct community_traffic_stats));
+            }
+
+            memcpy(&sss->community_stats[sss->num_communities], &temp_stats,
+                   sizeof(struct community_traffic_stats));
+
+            /* Update timestamps */
+            sss->community_stats[sss->num_communities].base_timestamp = time(NULL);
+
+            sss->num_communities++;
+        }
+    }
+    fclose(fp);
+}
+
 /* Save traffic statistics to binary format in config directory */
 static void save_traffic_stats_periodic(n2n_sn_t *sss) {
     if (!sss->community_stats || sss->num_communities == 0) return;
@@ -1051,7 +1095,6 @@ static int sort_communities (n2n_sn_t *sss,
   return 0;
 }
 
-
 static int process_mgmt(n2n_sn_t *sss,
                         const struct sockaddr_in *sender_sock,
                         const uint8_t *mgmt_buf,
@@ -1078,6 +1121,7 @@ static int process_mgmt(n2n_sn_t *sss,
 	ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
 	                    "---v2------------------------------------------------------------------v2---\n");
 
+    /* Display communities and their edges with integrated traffic stats */
 	HASH_ITER(hh, sss->communities, community, tmp) {
 
 		/* Find traffic stats for this community */
@@ -1091,23 +1135,23 @@ static int process_mgmt(n2n_sn_t *sss,
 			}
 		}
 
-		/* Send community name with traffic info */
-		if (stats && sss->traffic_stats_enabled) {
+		/* Always display active communities, regardless of traffic */
+		if (stats && sss->traffic_stats_enabled && stats->total_bytes > 0) {
     		double display_kbps = stats->instant_bps / 1024.0;
     		double last_24h_gb = stats->last_24h_bytes / (1024.0 * 1024.0 * 1024.0);
     		double total_gb_for_community = stats->total_bytes / (1024.0 * 1024.0 * 1024.0);
 
-            /* Unified judgment: check if inactive for more than 10 seconds */
+            /* Check if inactive for more than 10 seconds */
             if (stats->last_second_update > 0 && (now - stats->last_second_update) > 10) {
-                display_kbps = 0.0;  /* Inactive for over 10 seconds */
+                display_kbps = 0.0;
             }
 
-            /* Push to totals */
+            /* Update totals */
             total_instant_kbps += display_kbps;
             total_last_24h_gb += last_24h_gb;
             total_gb += total_gb_for_community;
 
-            /* Display this community */
+            /* Display community with traffic */
             if (display_kbps == 0.0) {
                 ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
                                     "%-37s  %4s %-7.1f  %-7.1f  %-10.1f\n",
@@ -1124,6 +1168,7 @@ static int process_mgmt(n2n_sn_t *sss,
 		sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
 		ressize = 0;
 
+        /* Display edges for this community */
 		num = 0;
 		HASH_ITER(hh, community->edges, peer, tmpPeer) {
 			ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
@@ -1138,7 +1183,46 @@ static int process_mgmt(n2n_sn_t *sss,
 		displayed_edges += num;
 	}
 
-	if (sss->traffic_stats_enabled && sss->num_communities > 0) {
+    /* Display inactive communities with traffic */
+    if (sss->traffic_stats_enabled) {
+        int i;
+        for (i = 0; i < sss->num_communities; i++) {
+            /* Calculate GB value and check */
+            double total_gb_inactive = sss->community_stats[i].total_bytes / (1024.0 * 1024.0 * 1024.0);
+
+            /* Show all communities with any traffic */
+            if (sss->community_stats[i].total_bytes == 0) {
+                continue;
+            }
+
+            /* Check if already displayed as active */
+            int found_active = 0;
+            HASH_ITER(hh, sss->communities, community, tmp) {
+                if (memcmp(sss->community_stats[i].community_name, community->community,
+                          sizeof(n2n_community_t)) == 0) {
+                    found_active = 1;
+                    break;
+                }
+            }
+
+            if (!found_active) {
+                double last_24h_gb = sss->community_stats[i].last_24h_bytes / (1024.0 * 1024.0 * 1024.0);
+
+                total_last_24h_gb += last_24h_gb;
+                total_gb += total_gb_inactive;
+
+                ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                                    "%-37s  %4s %-7.1f  %-7.1f  %-10.1f\n",
+                                    sss->community_stats[i].community_name, "    ",
+                                    0.0, last_24h_gb, total_gb_inactive);
+                sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
+                ressize = 0;
+            }
+        }
+    }
+
+    /* Display total statistics only if there are communities with traffic */
+    if (total_gb > 0) {
         struct tm *start_tm = localtime(&sss->community_stats[0].stats_start_time);
         char start_date[9];
         strftime(start_date, sizeof(start_date), "%Y%m%d", start_tm);
@@ -1214,7 +1298,6 @@ static int process_mgmt(n2n_sn_t *sss,
 
 	return 0;
 }
-
 
 static int sendto_mgmt(n2n_sn_t *sss,
                        const struct sockaddr_in *sender_sock,

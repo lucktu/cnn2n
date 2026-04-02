@@ -374,6 +374,9 @@ int main(int argc, char * const argv[]) {
     parse_rate_limit_config(&sss);
   }
 
+  /* Preload all community statistics */
+  preload_all_community_stats(&sss);
+
 #ifndef WIN32
   struct sigaction sa;
 
