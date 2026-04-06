@@ -135,9 +135,8 @@ static void recalculate_24h_traffic(struct community_traffic_stats *stats, time_
     /* Update 24-hour total */
     stats->last_24h_bytes = total;
 
-    /* Reset timing to current time */
+    /* Reset timing to current time (keep history_idx intact) */
     stats->last_minute_update = now;
-    stats->history_idx = 0;
     stats->base_timestamp = now;
 
     traceEvent(TRACE_INFO, "24h traffic recalculated: %.2f GB",
@@ -245,27 +244,21 @@ static void check_periodic_save(n2n_sn_t *sss, time_t now) {
 
 /* Check if MAC address is valid */
 static int is_valid_mac(const n2n_mac_t mac) {
-    /* MAC address validation */
-    int is_valid_mac = 1;
-
-    /* Check for zero MAC */
+    /* Reject zero MAC */
     if (mac[0] == 0 && mac[1] == 0 && mac[2] == 0 &&
-        mac[3] == 0 && mac[4] == 0 && mac[5] == 0) {
-        is_valid_mac = 0;
-    }
+        mac[3] == 0 && mac[4] == 0 && mac[5] == 0)
+        return 0;
 
-    /* Check for broadcast MAC */
+    /* Reject broadcast MAC */
     if (mac[0] == 0xFF && mac[1] == 0xFF && mac[2] == 0xFF &&
-        mac[3] == 0xFF && mac[4] == 0xFF && mac[5] == 0xFF) {
-        is_valid_mac = 0;
-    }
+        mac[3] == 0xFF && mac[4] == 0xFF && mac[5] == 0xFF)
+        return 0;
 
-    /* Check for locally administered MAC (00:01:00:xx:xx:xx pattern) */
-    if (mac[0] == 0x00 && mac[1] == 0x01 && mac[2] == 0x00) {
-        is_valid_mac = 0;
-    }
+    /* Reject locally administered MAC (00:01:00:xx:xx:xx pattern) */
+    if (mac[0] == 0x00 && mac[1] == 0x01 && mac[2] == 0x00)
+        return 0;
 
-    return is_valid_mac; /* 1 = valid, 0 = invalid */
+    return 1;
 }
 
 /* Find or create community statistics */
@@ -324,16 +317,7 @@ static struct community_traffic_stats* get_community_stats(n2n_sn_t *sss,
                sizeof(struct community_traffic_stats));
         memcpy(sss->community_stats[sss->num_communities].community_name,
                community, sizeof(n2n_community_t));
-
-    /* Initialize new fields */
-    sss->community_stats[sss->num_communities].last_second_update = 0;
-    sss->community_stats[sss->num_communities].last_minute_update = 0;
-    sss->community_stats[sss->num_communities].recent_seconds_idx = 0;
-    sss->community_stats[sss->num_communities].stats_start_time = time(NULL);
-    /* Initialize token bucket fields */
-    sss->community_stats[sss->num_communities].last_token_refill = 0;
-    sss->community_stats[sss->num_communities].tokens = 0;
-
+        sss->community_stats[sss->num_communities].stats_start_time = time(NULL);
     }
 
     return &sss->community_stats[sss->num_communities++];
@@ -853,15 +837,9 @@ void sn_term(n2n_sn_t *sss)
 
     /* Clean up community statistics */
     if (sss->community_stats) {
-        char save_path[512];
-        generate_stats_path(sss, save_path, sizeof(save_path));
-
-        FILE *fp = fopen(save_path, "wb");
-        if (fp) {
-            fwrite(sss->community_stats, sizeof(struct community_traffic_stats),
-                   sss->num_communities, fp);
-            fclose(fp);
-        }
+        save_traffic_stats_periodic(sss);
+        free(sss->community_stats);
+        sss->community_stats = NULL;
     }
 
     /* Clean up rate limit rules */
@@ -1135,7 +1113,7 @@ static int process_mgmt(n2n_sn_t *sss,
 			}
 		}
 
-		/* Always display active communities, regardless of traffic */
+		/* Display online communities (always shown regardless of traffic) */
 		if (stats && sss->traffic_stats_enabled && stats->total_bytes > 0) {
     		double display_kbps = stats->instant_bps / 1024.0;
     		double last_24h_gb = stats->last_24h_bytes / (1024.0 * 1024.0 * 1024.0);
@@ -1151,7 +1129,6 @@ static int process_mgmt(n2n_sn_t *sss,
             total_last_24h_gb += last_24h_gb;
             total_gb += total_gb_for_community;
 
-            /* Display community with traffic */
             if (display_kbps == 0.0) {
                 ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
                                     "%-37s  %4s %-7.1f  %-7.1f  %-10.1f\n",
@@ -1186,16 +1163,15 @@ static int process_mgmt(n2n_sn_t *sss,
     /* Display inactive communities with traffic */
     if (sss->traffic_stats_enabled) {
         int i;
-        for (i = 0; i < sss->num_communities; i++) {
-            /* Calculate GB value and check */
-            double total_gb_inactive = sss->community_stats[i].total_bytes / (1024.0 * 1024.0 * 1024.0);
+        double inactive_total_gb = 0.0; /* Total traffic of communities offline for >24h */
 
-            /* Show all communities with any traffic */
+        for (i = 0; i < sss->num_communities; i++) {
+            /* Skip communities with no traffic at all */
             if (sss->community_stats[i].total_bytes == 0) {
                 continue;
             }
 
-            /* Check if already displayed as active */
+            /* Check if already displayed as active (currently online) */
             int found_active = 0;
             HASH_ITER(hh, sss->communities, community, tmp) {
                 if (memcmp(sss->community_stats[i].community_name, community->community,
@@ -1204,20 +1180,39 @@ static int process_mgmt(n2n_sn_t *sss,
                     break;
                 }
             }
+            if (found_active) continue;
 
-            if (!found_active) {
-                double last_24h_gb = sss->community_stats[i].last_24h_bytes / (1024.0 * 1024.0 * 1024.0);
+            double last_24h_gb = sss->community_stats[i].last_24h_bytes / (1024.0 * 1024.0 * 1024.0);
+            double total_gb_inactive = sss->community_stats[i].total_bytes / (1024.0 * 1024.0 * 1024.0);
 
-                total_last_24h_gb += last_24h_gb;
+            /* Offline community with last activity >24h ago: fold into summary row */
+            time_t last_active = sss->community_stats[i].last_second_update;
+            if (last_active == 0 || (now - last_active) > 86400) {
+                inactive_total_gb += total_gb_inactive;
                 total_gb += total_gb_inactive;
-
-                ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
-                                    "%-37s  %4s %-7.1f  %-7.1f  %-10.1f\n",
-                                    sss->community_stats[i].community_name, "    ",
-                                    0.0, last_24h_gb, total_gb_inactive);
-                sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
-                ressize = 0;
+                continue;
             }
+
+            /* Community went offline recently (within 24h): show it */
+            total_last_24h_gb += last_24h_gb;
+            total_gb += total_gb_inactive;
+
+            ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                                "%-37s  %4s %-7.1f  %-7.1f  %-10.1f\n",
+                                sss->community_stats[i].community_name, "    ",
+                                0.0, last_24h_gb, total_gb_inactive);
+            sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
+            ressize = 0;
+        }
+
+        /* Show a single summary row for offline communities inactive for >24h */
+        if (inactive_total_gb > 0) {
+            ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+                                "%-37s  %4s %-7s  %-7s  %-10.1f\n",
+                                "offline_community/24h", "    ",
+                                "0.0", "0.0", inactive_total_gb);
+            sendto_mgmt(sss, sender_sock, (const uint8_t *) resbuf, ressize);
+            ressize = 0;
         }
     }
 
@@ -1226,6 +1221,9 @@ static int process_mgmt(n2n_sn_t *sss,
         struct tm *start_tm = localtime(&sss->community_stats[0].stats_start_time);
         char start_date[9];
         strftime(start_date, sizeof(start_date), "%Y%m%d", start_tm);
+
+	    ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
+	                            "---------------------\n");
 
         if (total_instant_kbps == 0.0) {
             ressize += snprintf(resbuf + ressize, N2N_SN_PKTBUF_SIZE - ressize,
