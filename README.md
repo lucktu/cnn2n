@@ -6,6 +6,7 @@
 4. 2023-03-15：v2.8.2 版，速度和稳定性都有一定提升，推荐使用；
 5. 2025-12-01：v2.8.3 版，加强直连成功率（尤其指大局域网内的直连）
 6. 2026-04-01：v2.8.4 版，在服务器端增加每组的速度显示和控制
+7. 2026-06-26：欢迎关注这个 n2n：https://github.com/lucktu/n2n6
 
 如果你愿意帮助增加新的功能，请加入QQ群(196588661)讨论后再进行。
 
@@ -21,6 +22,7 @@ make
 法二：（编译静态是在 cmake 里加入 -DCMAKE_EXE_LINKER_FLAGS="-static"）
 mkdir build && cd build
 cmake -G "Unix Makefiles" -DCMAKE_SYSTEM_NAME="Linux" -DCMAKE_BUILD_TYPE="Release" -DCMAKE_VERBOSE_MAKEFILE=ON --build -B ./ -S ../
+or: cmake -G 'Unix Makefiles' -DCMAKE_BUILD_TYPE=Release ../
 make</pre>
 
 交叉编译（在 ubuntu 下编译 mipsel 的程序）<pre>
