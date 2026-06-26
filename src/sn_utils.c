@@ -143,43 +143,30 @@ static void recalculate_24h_traffic(struct community_traffic_stats *stats, time_
                total / (1024.0 * 1024.0 * 1024.0));
 }
 
-/* Generate statistics file path based on config file path */
-static void generate_stats_path(n2n_sn_t *sss, char *path, size_t path_size) {
-    strncpy(path, sss->rate_limit_config_path, path_size - 1);
-    path[path_size - 1] = '\0';
-
-    char *last_slash = strrchr(path, '/');
-    if (last_slash) {
-        char *dot = strrchr(last_slash + 1, '.');
-        if (dot) {
-            /* Remove existing extension and add .dat */
-            strcpy(dot, ".dat");
-        } else {
-            /* No extension, just add .dat */
-            strcat(last_slash + 1, ".dat");
-        }
-    } else {
-        /* No path, just filename */
-        char *dot = strrchr(path, '.');
-        if (dot) {
-            strcpy(dot, ".dat");
-        } else {
-            strcat(path, ".dat");
-        }
-    }
+/* Derive config (.cfg) path from stats (.dat) path */
+static void derive_cfg_path(const char *stats_path, char *cfg_path, size_t sz) {
+    strncpy(cfg_path, stats_path, sz - 1);
+    cfg_path[sz - 1] = '\0';
+    char *dot = strrchr(cfg_path, '.');
+    char *slash = strrchr(cfg_path, '/');
+#ifdef _WIN32
+    char *bslash = strrchr(cfg_path, '\\');
+    if (!slash || (bslash && bslash > slash)) slash = bslash;
+#endif
+    if (dot && dot > slash)
+        strcpy(dot, ".cfg");
+    else
+        strncat(cfg_path, ".cfg", sz - strlen(cfg_path) - 1);
 }
 
 /* Preload all community statistics from file */
 void preload_all_community_stats(n2n_sn_t *sss) {
-    char load_path[512];
     FILE *fp;
     struct community_traffic_stats temp_stats;
     int found;
     int i;
 
-    generate_stats_path(sss, load_path, sizeof(load_path));
-
-    fp = fopen(load_path, "rb");
+    fp = fopen(sss->rate_limit_stats_path, "rb");
     if (!fp) return;
 
     while (fread(&temp_stats, sizeof(struct community_traffic_stats), 1, fp) == 1) {
@@ -217,17 +204,14 @@ void preload_all_community_stats(n2n_sn_t *sss) {
 static void save_traffic_stats_periodic(n2n_sn_t *sss) {
     if (!sss->community_stats || sss->num_communities == 0) return;
 
-    char save_path[512];
-    generate_stats_path(sss, save_path, sizeof(save_path));
-
-    FILE *fp = fopen(save_path, "wb");
+    FILE *fp = fopen(sss->rate_limit_stats_path, "wb");
     if (fp) {
         fwrite(sss->community_stats, sizeof(struct community_traffic_stats),
                sss->num_communities, fp);
         fclose(fp);
-        traceEvent(TRACE_NORMAL, "Traffic statistics saved to: %s", save_path);
+        traceEvent(TRACE_NORMAL, "Traffic statistics saved to: %s", sss->rate_limit_stats_path);
     } else {
-        traceEvent(TRACE_ERROR, "Failed to save traffic statistics to: %s", save_path);
+        traceEvent(TRACE_ERROR, "Failed to save traffic statistics to: %s", sss->rate_limit_stats_path);
     }
 }
 
@@ -284,10 +268,7 @@ static struct community_traffic_stats* get_community_stats(n2n_sn_t *sss,
     }
 
     int loaded_from_file = 0;
-    char load_path[512];
-    generate_stats_path(sss, load_path, sizeof(load_path));
-
-    FILE *fp = fopen(load_path, "rb");
+    FILE *fp = fopen(sss->rate_limit_stats_path, "rb");
     if (fp) {
         struct community_traffic_stats temp_stats;
         while (fread(&temp_stats, sizeof(struct community_traffic_stats), 1, fp) == 1) {
@@ -453,6 +434,9 @@ static int create_default_config(const char *config_path) {
 
 /* Parse rate limit configuration file */
 void parse_rate_limit_config(n2n_sn_t *sss) {
+    char cfgpath[512];
+    derive_cfg_path(sss->rate_limit_stats_path, cfgpath, sizeof(cfgpath));
+
     FILE *fp;
     char line[512];
     char community[32];
@@ -460,14 +444,14 @@ void parse_rate_limit_config(n2n_sn_t *sss) {
 
     /* Check if file exists and is empty */
     struct stat file_stat;
-    if (stat(sss->rate_limit_config_path, &file_stat) == 0) {
+    if (stat(cfgpath, &file_stat) == 0) {
         if (file_stat.st_size == 0) {
             /* File is empty, create default configuration */
-            create_default_config(sss->rate_limit_config_path);
+            create_default_config(cfgpath);
         }
     } else {
         /* File doesn't exist, create default configuration */
-        create_default_config(sss->rate_limit_config_path);
+        create_default_config(cfgpath);
     }
 
     /* Free existing rules */
@@ -478,7 +462,7 @@ void parse_rate_limit_config(n2n_sn_t *sss) {
     }
 
     sss->traffic_stats_enabled = 0; /* Reset to disabled on each reload */
-    fp = fopen(sss->rate_limit_config_path, "r");
+    fp = fopen(cfgpath, "r");
     if (!fp) return;
 
     /* Build rule list using tail insertion to maintain file order priority */
@@ -535,8 +519,10 @@ static int check_rate_limit(n2n_sn_t *sss, const n2n_community_t community,
 
     /* Reload config if changed (max once per 60 seconds for performance) */
     if (now - last_config_check >= 60) {
+        char cfgpath[512];
+        derive_cfg_path(sss->rate_limit_stats_path, cfgpath, sizeof(cfgpath));
         struct stat file_stat;
-        if (stat(sss->rate_limit_config_path, &file_stat) == 0) {
+        if (stat(cfgpath, &file_stat) == 0) {
             if (file_stat.st_mtime > sss->config_last_modified) {
                 parse_rate_limit_config(sss);
                 sss->config_last_modified = file_stat.st_mtime;
@@ -798,7 +784,7 @@ int sn_init(n2n_sn_t *sss) {
     sss->num_communities = 0;
     sss->max_communities = 0;
     sss->rate_limit_rules = NULL;
-    strcpy(sss->rate_limit_config_path, "rate_limit.conf");
+    strcpy(sss->rate_limit_stats_path, "rate_limit.dat");
     sss->config_last_modified = 0;
     sss->last_stats_update = 0;
     sss->traffic_stats_enabled = 0;  /* Disabled by default */

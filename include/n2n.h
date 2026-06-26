@@ -395,7 +395,7 @@ typedef struct n2n_sn {
     int num_communities;
     int max_communities;
     struct rate_limit_rule *rate_limit_rules;
-    char rate_limit_config_path[256];
+    char rate_limit_stats_path[256];
     time_t config_last_modified;
     time_t last_stats_update;
     uint8_t traffic_stats_enabled;  /* 0=disabled (default), 1=enabled */

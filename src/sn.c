@@ -113,7 +113,7 @@ static void help() {
 	printf("-h                       | This help message\n");
     printf("-------------------------- new features from ntop's n2n_v2.8.0 --- by github.com/lucktu/cnn2n new2 --------------------------\n");
 	printf("-a <net/bit>             | Set an automatically assigned subnet for edges (default = 172.17.12.0/24)\n");
-	printf("-L <file>                | File associated with rate limiting configuration\n");
+	printf("-L <file>                | Traffic statistics file (config auto-derived as .cfg)\n");
 	exit(1);
 }
 
@@ -190,9 +190,9 @@ static int setOption(int optkey, char *_optarg, n2n_sn_t *sss) {
 			setTraceLevel(getTraceLevel() + 1);
 			break;
 
-		case 'L': /* rate limit config */
-			strncpy(sss->rate_limit_config_path, _optarg, sizeof(sss->rate_limit_config_path) - 1);
-			sss->rate_limit_config_path[sizeof(sss->rate_limit_config_path) - 1] = '\0';
+		case 'L': /* rate limit stats */
+			strncpy(sss->rate_limit_stats_path, _optarg, sizeof(sss->rate_limit_stats_path) - 1);
+			sss->rate_limit_stats_path[sizeof(sss->rate_limit_stats_path) - 1] = '\0';
 			break;
 
 		default:
@@ -370,7 +370,7 @@ int main(int argc, char * const argv[]) {
   }
 
   /* Load initial rate limit configuration */
-  if (strlen(sss.rate_limit_config_path) > 0) {
+  if (strlen(sss.rate_limit_stats_path) > 0) {
     parse_rate_limit_config(&sss);
   }
 
