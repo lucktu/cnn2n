@@ -19,6 +19,8 @@
 #ifdef WIN32
 
 #include "edge_utils_win32.h"
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
 
 /* ************************************** */
 
@@ -44,6 +46,80 @@ HANDLE startTunReadThread(struct tunread_arg *arg) {
 		      (void*)arg,   /* argument to thread function */
 		      0,            /* thread creation flags */
 		      &dwThreadId)); /* thread id out */
+}
+
+/* ************************************** */
+
+int get_all_local_addresses_win32(n2n_sock_t *local_socks, uint8_t *num_addrs, uint8_t max_addrs) {
+    PIP_ADAPTER_ADDRESSES pAddresses = NULL;
+    PIP_ADAPTER_ADDRESSES pCurrAddresses = NULL;
+    PIP_ADAPTER_UNICAST_ADDRESS pUnicast = NULL;
+    ULONG outBufLen = 15000;
+    DWORD dwRetVal = 0;
+    uint8_t count = 0;
+
+    *num_addrs = 0;
+
+    pAddresses = (IP_ADAPTER_ADDRESSES *)malloc(outBufLen);
+    if (pAddresses == NULL) {
+        return -1;
+    }
+
+    dwRetVal = GetAdaptersAddresses(AF_INET,
+                                    GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                                    NULL, pAddresses, &outBufLen);
+
+    if (dwRetVal == ERROR_BUFFER_OVERFLOW) {
+        free(pAddresses);
+        pAddresses = (IP_ADAPTER_ADDRESSES *)malloc(outBufLen);
+        if (pAddresses == NULL) {
+            return -1;
+        }
+        dwRetVal = GetAdaptersAddresses(AF_INET,
+                                        GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                                        NULL, pAddresses, &outBufLen);
+    }
+
+    if (dwRetVal == NO_ERROR) {
+        pCurrAddresses = pAddresses;
+        while (pCurrAddresses && count < max_addrs) {
+            pUnicast = pCurrAddresses->FirstUnicastAddress;
+            while (pUnicast && count < max_addrs) {
+                if (pUnicast->Address.lpSockaddr->sa_family == AF_INET) {
+                    struct sockaddr_in *addr = (struct sockaddr_in *)pUnicast->Address.lpSockaddr;
+                    uint32_t ip = ntohl(addr->sin_addr.s_addr);
+
+                    /* Skip loopback */
+                    if ((ip & 0xFF000000) == 0x7F000000) {
+                        pUnicast = pUnicast->Next;
+                        continue;
+                    }
+
+                    /* Check if it's a private IP */
+                    if ((ip & 0xFF000000) == 0x0A000000 ||      /* 10.0.0.0/8 */
+                        (ip & 0xFFF00000) == 0xAC100000 ||      /* 172.16.0.0/12 */
+                        (ip & 0xFFFF0000) == 0xC0A80000) {      /* 192.168.0.0/16 */
+
+                        local_socks[count].family = AF_INET;
+                        memcpy(local_socks[count].addr.v4, &addr->sin_addr.s_addr, 4);
+                        local_socks[count].port = 0;
+                        count++;
+                    }
+                }
+                pUnicast = pUnicast->Next;
+            }
+            pCurrAddresses = pCurrAddresses->Next;
+        }
+    }
+
+    free(pAddresses);
+    *num_addrs = count;
+
+    if (count == 0) {
+        return -1;
+    }
+
+    return 0;
 }
 #endif
 
