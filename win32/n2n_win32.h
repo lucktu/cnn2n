@@ -30,13 +30,7 @@
 
 #ifdef _MSC_VER
 #include "getopt.h"
-
-/* Other Win environments are expected to support stdint.h */
-
-/* stdint.h typedefs (C99) (not present in Visual Studio) */
-typedef unsigned int uint32_t;
-typedef unsigned short uint16_t;
-typedef unsigned char uint8_t;
+#include <stdint.h>
 
 /* sys/types.h typedefs (not present in Visual Studio) */
 typedef unsigned int u_int32_t;
@@ -102,7 +96,7 @@ typedef struct tuntap_dev {
 	char            *device_name;
 	char            *ifName;
 	OVERLAPPED      overlap_read, overlap_write;
-	n2n_mac_t       mac_addr;
+	uint8_t         mac_addr[ETH_ADDR_LEN];
 	uint32_t        ip_addr;
 	uint32_t        device_mask;
 	unsigned int    mtu;

@@ -1,0 +1,291 @@
+name: Build CNN2N
+
+on:
+#  push:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TZ: Asia/Shanghai
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  build:
+    name: ${{ matrix.TARGET }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-windows_static
+            os: windows-latest
+            ARCH: x64
+            MSVC_ARCH: x64
+            VCPKG_TRIPLET: x64-windows-static
+            artifact_name: windows_x64_static
+          - target: x86_64-windows
+            os: windows-latest
+            ARCH: x64
+            MSVC_ARCH: x64
+            VCPKG_TRIPLET: x64-windows
+            artifact_name: windows_x64
+
+          - target: i686-windows_static
+            os: windows-latest
+            ARCH: x86
+            MSVC_ARCH: x86
+            VCPKG_TRIPLET: x86-windows-static
+            artifact_name: windows_x86_static
+          - target: i686-windows
+            os: windows-latest
+            ARCH: x86
+            MSVC_ARCH: x86
+            VCPKG_TRIPLET: x86-windows
+            artifact_name: windows_x86
+
+          - target: aarch64-linux-musl_static
+            os: ubuntu-latest
+            URL: aarch64-linux-musl
+            artifact_name: linux_aarch64_musl_static
+          - target: aarch64-linux-musl
+            os: ubuntu-latest
+            URL: aarch64-linux-musl
+            artifact_name: linux_aarch64_musl
+
+          - target: x86_64-linux-musl_static
+            os: ubuntu-latest
+            URL: x86_64-linux-musl
+            artifact_name: linux_x64_musl_static
+          - target: x86_64-linux-musl
+            os: ubuntu-latest
+            URL: x86_64-linux-musl
+            artifact_name: linux_x64_musl
+
+          - target: i686-linux-musl_static
+            os: ubuntu-latest
+            URL: i686-linux-musl
+            artifact_name: linux_x86_musl_static
+          - target: i686-linux-musl
+            os: ubuntu-latest
+            URL: i686-linux-musl
+            artifact_name: linux_x86_musl
+
+          - target: armv7-linux-musleabihf_static
+            os: ubuntu-latest
+            URL: armv7l-linux-musleabihf
+            artifact_name: linux_armv7_musleabihf_static
+          - target: armv7-linux-musleabihf
+            os: ubuntu-latest
+            URL: armv7l-linux-musleabihf
+            artifact_name: linux_armv7_musleabihf
+
+          - target: armv7-linux-musleabi_static
+            os: ubuntu-latest
+            URL: armv7m-linux-musleabi
+            artifact_name: linux_armv7_musleabi_static
+          - target: armv7-linux-musleabi
+            os: ubuntu-latest
+            URL: armv7m-linux-musleabi
+            artifact_name: linux_armv7_musleabi
+
+          - target: arm-linux-musleabihf_static
+            os: ubuntu-latest
+            URL: arm-linux-musleabihf
+            artifact_name: linux_arm_musleabihf_static
+          - target: arm-linux-musleabihf
+            os: ubuntu-latest
+            URL: arm-linux-musleabihf
+            artifact_name: linux_arm_musleabihf
+
+          - target: arm-linux-musleabi_static
+            os: ubuntu-latest
+            URL: arm-linux-musleabi
+            artifact_name: linux_arm_musleabi_static
+          - target: arm-linux-musleabi
+            os: ubuntu-latest
+            URL: arm-linux-musleabi
+            artifact_name: linux_arm_musleabi
+
+          - target: mipsel-linux-musl_static
+            os: ubuntu-latest
+            URL: mipsel-linux-muslsf
+            artifact_name: linux_mipsel_musl_static
+          - target: mipsel-linux-musl
+            os: ubuntu-latest
+            URL: mipsel-linux-muslsf
+            artifact_name: linux_mipsel_musl
+
+          - target: mips-linux-musl_static
+            os: ubuntu-latest
+            URL: mips-linux-muslsf
+            artifact_name: linux_mips_musl_static
+          - target: mips-linux-musl
+            os: ubuntu-latest
+            URL: mips-linux-muslsf
+            artifact_name: linux_mips_musl
+
+          - target: arm64-apple-darwin
+            os: macos-latest
+            artifact_name: mac_arm64
+
+    runs-on: ${{ matrix.os }}
+    env:
+      TARGET: ${{ matrix.TARGET }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup MSVC environment
+        if: runner.os == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1.13.0
+        with:
+          arch: ${{ matrix.MSVC_ARCH }}
+
+      - name: Install OpenSSL (Windows)
+        if: runner.os == 'windows'
+        shell: pwsh
+        run: |
+          vcpkg install openssl:${{ matrix.VCPKG_TRIPLET }}
+
+      - name: Windows build (static)
+        if: runner.os == 'windows' && endsWith(matrix.TARGET, '_static')
+        shell: pwsh
+        run: |
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+          mkdir build
+          cd build
+          cmake .. `
+            -G "NMake Makefiles" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_FLAGS_RELEASE="/MT /O2 /Gy /Gw /DWIN32 /D_WIN32_WINNT=0x0601" `
+            -DCMAKE_EXE_LINKER_FLAGS="/SUBSYSTEM:CONSOLE,6.01 /MACHINE:${{ matrix.ARCH }} /OPT:REF /OPT:ICF" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded" `
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.VCPKG_TRIPLET }}" `
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake"
+          nmake
+          if ($LASTEXITCODE -ne 0) { Write-Host "nmake failed with exit code $LASTEXITCODE"; exit $LASTEXITCODE }
+          .\edge.exe -h || true
+          .\supernode.exe -h || true
+
+      - name: Windows build (dynamic)
+        if: runner.os == 'windows' && !endsWith(matrix.TARGET, '_static')
+        shell: pwsh
+        run: |
+          if (Test-Path build) { Remove-Item -Recurse -Force build }
+          mkdir build
+          cd build
+          cmake .. `
+            -G "NMake Makefiles" `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_FLAGS_RELEASE="/MD /O2 /Gy /Gw /DWIN32 /D_WIN32_WINNT=0x0601" `
+            -DCMAKE_EXE_LINKER_FLAGS="/SUBSYSTEM:CONSOLE,6.01 /MACHINE:${{ matrix.ARCH }} /OPT:REF /OPT:ICF" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreadedDLL" `
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.VCPKG_TRIPLET }}" `
+            -DCMAKE_TOOLCHAIN_FILE="C:\vcpkg\scripts\buildsystems\vcpkg.cmake"
+          nmake
+          if ($LASTEXITCODE -ne 0) { Write-Host "nmake failed with exit code $LASTEXITCODE"; exit $LASTEXITCODE }
+          .\edge.exe -h || true
+          .\supernode.exe -h || true
+
+      - name: Set timezone
+        if: runner.os == 'Linux'
+        run: sudo timedatectl set-timezone "Asia/Shanghai"
+
+      - name: Download gcc
+        if: runner.os == 'Linux'
+        uses: lmq8267/dl-musl@main
+        with:
+          target: ${{ matrix.URL }}
+          static: true
+          gccpath: /opt/musl_gcc
+
+      - name: Linux build
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          LINKDIR="build"
+          rm -rf "$LINKDIR"
+          mkdir -p "$LINKDIR" && cd "$LINKDIR"
+          if [ "${{ endsWith(matrix.TARGET, '_static') }}" = "true" ]; then
+            EXTRA="-static -static-libgcc"
+          else
+            EXTRA=""
+          fi
+          # Architecture-specific optimization flags:
+          # - aarch64: NEON always available; -DSPECK_ARM_NEON enables Speck NEON path
+          # - armv7 Cortex-A (musleabihf): -DSPECK_ARM_NEON -mfpu=neon
+          # - armv7 Cortex-M (musleabi): NO NEON (architecture lacks it)
+          # - x86_64/arm/mips legacy: no SIMD flags
+          ARCH_FLAGS=""
+          case "${{ matrix.TARGET }}" in
+            aarch64-*)       ARCH_FLAGS="-DSPECK_ARM_NEON" ;;
+            armv7-linux-musleabihf*) ARCH_FLAGS="-DSPECK_ARM_NEON -mfpu=neon" ;;
+          esac
+          echo "Target=${{ matrix.TARGET }} ARCH_FLAGS=$ARCH_FLAGS EXTRA=$EXTRA"
+          # Musl cross-compilation lacks OpenSSL for target arch; disable AES.
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-O2 -fno-strict-aliasing $ARCH_FLAGS" \
+            -DCMAKE_C_FLAGS_RELEASE="-DNDEBUG" \
+            -DCMAKE_EXE_LINKER_FLAGS="$EXTRA" \
+            -DCMAKE_C_COMPILER=${CC} \
+            -DN2N_OPTION_AES=OFF
+          make -j$(nproc)
+          ./edge -h || true
+          ls -la
+          file edge
+          $STRIP edge
+          $STRIP supernode
+
+      - name: Install OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install openssl
+
+      - name: macOS build
+        if: runner.os == 'macOS'
+        run: |
+          set -e
+          rm -rf build
+          mkdir -p build && cd build
+          # Native arm64 build: on arm64 runners brew installs arm64 OpenSSL,
+          # so forcing x86_64 would fail to link (architecture mismatch).
+          OPENSSL_ROOT_DIR="$(brew --prefix openssl)"
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="-O2 -ffunction-sections -fdata-sections" \
+            -DCMAKE_C_FLAGS_RELEASE="-DNDEBUG" \
+            -DCMAKE_EXE_LINKER_FLAGS="-Wl,-dead_strip" \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
+          make -j$(sysctl -n hw.logicalcpu)
+          ./edge -h || true
+          ls -la
+          file edge
+          strip edge
+          strip supernode
+
+      - name: Upload
+        uses: actions/upload-artifact@master
+        if: always()
+        continue-on-error: true
+        with:
+          name: cnn2n_v2_${{ matrix.artifact_name }}
+          path: |
+            build/edge${{ runner.os == 'Windows' && '.exe' || '' }}
+            build/supernode${{ runner.os == 'Windows' && '.exe' || '' }}
+
+      - name: Delete workflow
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          retain_days: 0
+          keep_minimum_runs: 1

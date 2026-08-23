@@ -20,10 +20,7 @@
 #define N2N_WIRE_H_
 
 #include <stdlib.h>
-#ifndef _MSC_VER
-/* Not included in Visual Studio 2008 */
 #include <stdint.h>
-#endif
 
 #define N2N_PKT_VERSION                 2
 #define N2N_DEFAULT_TTL                 2       /* can be forwarded twice at most */
