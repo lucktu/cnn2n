@@ -129,23 +129,23 @@ jobs:
           - target: mipsel-linux-musl_static
             os: ubuntu-latest
             URL: mipsel-linux-muslsf
-            OSSL_CONF: linux-mips32le
+            OSSL_CONF: linux-generic32
             artifact_name: linux_mipsel_musl_static
           - target: mipsel-linux-musl
             os: ubuntu-latest
             URL: mipsel-linux-muslsf
-            OSSL_CONF: linux-mips32le
+            OSSL_CONF: linux-generic32
             artifact_name: linux_mipsel_musl
 
           - target: mips-linux-musl_static
             os: ubuntu-latest
             URL: mips-linux-muslsf
-            OSSL_CONF: linux-mips32
+            OSSL_CONF: linux-generic32
             artifact_name: linux_mips_musl_static
           - target: mips-linux-musl
             os: ubuntu-latest
             URL: mips-linux-muslsf
-            OSSL_CONF: linux-mips32
+            OSSL_CONF: linux-generic32
             artifact_name: linux_mips_musl
 
           - target: arm64-apple-darwin
