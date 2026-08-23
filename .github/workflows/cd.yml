@@ -240,7 +240,7 @@ jobs:
           # dl-musl exports CC/STRIP; resource limit to keep CI time reasonable
           ulimit -t 3600
           ./Configure "${{ matrix.OSSL_CONF }}" --prefix="$OSSL_ROOT" --libdir=lib \
-            -static no-shared no-tests no-asm no-docs -fPIC
+            -static no-shared no-tests no-asm -fPIC
           make -j2
           make install_sw
           ls -la "$OSSL_ROOT/lib"
