@@ -329,9 +329,11 @@ static void sigproc(int sig) {
     traceEvent(TRACE_NORMAL, "Signal received: shutting down");
     keep_running = 0;
     break;
+#ifndef WIN32
   case SIGHUP:
     traceEvent(TRACE_NORMAL, "SIGHUP received: ignoring (no reload implemented)");
     break;
+#endif
   default:
     break;
   }
